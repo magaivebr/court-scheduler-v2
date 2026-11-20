@@ -95,3 +95,19 @@ test('real browser contexts isolate cookies between two users and a new login',a
     await a.close();assert.equal((await b.cookies())[0].value,'account-b');
   }finally{await p.close();}
 });
+
+test('profile Person id is freshly verified without navigating booking pages or accepting a name match',async()=>{
+  const p=new FixtureProvider({providerIdentitySource:'profile-person-id'});
+  let personId='10001';
+  try{
+    const context=await p.createContext();
+    await context.route('https://usc.kuleuven.cloud/members/profile/myprofile',r=>r.fulfill({status:200,contentType:'text/html',body:`<label>Person id<input data-test-id="id-field" disabled value="${personId}"></label>`}));
+    const page=await p.officialPage(context),bookingUrl=page.url();
+    const [a,b]=await Promise.all([p.readIdentity(page),p.readIdentity(page)]);
+    assert.deepEqual(a,b);assert.equal(a.verified,true);assert.equal(a.source,'profile_person_id');
+    assert.notEqual(a.id,personId);assert.equal(context.pages().length,1);assert.equal(page.url(),bookingUrl);
+    personId='10002';
+    await assert.rejects(p.assertAccount(page,'Fixture Participant',a),/identity changed/);
+    assert.equal(context.pages().length,1);assert.equal(p.clicks.length,0);
+  }finally{await p.close();}
+});
