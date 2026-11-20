@@ -23,6 +23,7 @@ export class BookingProvider {
     this.launch = options.launch ?? (opts => chromium.launch(opts));
     this.browserPromise = null;
     this.contexts = new Set();
+    this.identityReads = new WeakMap();
     this.hosts = [...DEFAULT_HOSTS, ...(config.loginAllowedHosts ?? [])];
   }
   async browser() {
@@ -68,6 +69,7 @@ export class BookingProvider {
     await page.waitForFunction(() => !!globalThis.CourtAdapter && !!document.querySelector('[data-test-id="native-date-picker-input"]'), null, { timeout: 15000 });
   }
   async readIdentity(page) {
+    if(this.config.providerIdentitySource==='profile-person-id')return this.readProfileIdentity(page);
     if (!this.config.providerIdentitySelector) return {kind:'visible_account_label',verified:false};
     const value = await page.evaluate(({selector,attribute}) => {
       const nodes=document.querySelectorAll(selector);
@@ -76,6 +78,30 @@ export class BookingProvider {
     }, {selector:this.config.providerIdentitySelector,attribute:this.config.providerIdentityAttribute??''});
     if(typeof value!=='string'||!value||value.length>256)throw message('The configured account identity field could not be verified. Contact the host.');
     return {kind:'configured_dom_identity',id:createHash('sha256').update(`${OFFICIAL_ORIGIN}\n${value}`).digest('hex'),verified:true};
+  }
+  async readProfileIdentity(page) {
+    const context=page.context();
+    // Coalesce simultaneous checks in the same isolated context, but never cache
+    // a completed identity check across later preparation/submission steps.
+    if(this.identityReads.has(context))return this.identityReads.get(context);
+    const pending=(async()=>{
+      const identityPage=await context.newPage();
+      try{
+        await identityPage.goto(`${OFFICIAL_ORIGIN}/members/profile/myprofile`,{waitUntil:'domcontentloaded',timeout:30000});
+        const url=new URL(identityPage.url());
+        if(url.origin!==OFFICIAL_ORIGIN||url.pathname!=='/members/profile/myprofile')throw message('Reconnect your booking account before checking its identity.');
+        // Observed on the official profile page: a visible, disabled Person id
+        // input. Read its DOM value only; never inspect app state or tokens.
+        await identityPage.waitForFunction(()=>{
+          const nodes=document.querySelectorAll('input[data-test-id="id-field"]');
+          return nodes.length===1&&nodes[0].disabled&&nodes[0].getClientRects().length>0&&/^\d{1,20}$/.test(nodes[0].value.trim());
+        },null,{timeout:15000});
+        const value=await identityPage.locator('input[data-test-id="id-field"]').inputValue();
+        return {kind:'configured_dom_identity',source:'profile_person_id',id:createHash('sha256').update(`${OFFICIAL_ORIGIN}\nprofile-person-id\n${value.trim()}`).digest('hex'),verified:true};
+      }finally{await identityPage.close().catch(()=>{});}
+    })();
+    this.identityReads.set(context,pending);
+    try{return await pending;}finally{if(this.identityReads.get(context)===pending)this.identityReads.delete(context);}
   }
   async assertAccount(page, expected, expectedIdentity) {
     await this.assertOfficial(page);

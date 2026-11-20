@@ -160,7 +160,7 @@ export class Repository {
       if (job.mode==='live' && (!this.config.liveEnabled || !this.config.production || connection.status!=='connected')) throw new HttpError(409,'Live booking is not enabled on this host.');
       if(job.mode==='live'&&!(connection.identity?.kind==='configured_dom_identity'&&connection.identity.verified===true&&connection.identity.id))throw new HttpError(409,'Live booking requires a verified stable account identity. The host must validate the provider integration first.');
       if (job.mode==='live' && Date.parse(job.releaseAt)<=now) throw new HttpError(409,'The release time has passed. Choose a future release.');
-      for (const row of this.db.prepare("SELECT * FROM jobs WHERE user_id=? AND id<>? AND status IN ('armed','preparing','running','confirmed','partial','unknown','needs_review')").all(userId,id)) {
+      for (const row of this.db.prepare("SELECT * FROM jobs WHERE user_id=? AND id<>? AND mode=? AND status IN ('armed','preparing','running','confirmed','partial','unknown','needs_review')").all(userId,id,job.mode)) {
         const other=safeJSON(row.selection_json);
         if (other.date===job.date && job.start<other.start+2 && other.start<job.start+2) throw new HttpError(409,'An overlapping plan already exists for this account.');
       }

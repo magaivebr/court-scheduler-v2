@@ -34,6 +34,8 @@ export function loadConfig(env = process.env) {
   const mode = env.BOOKING_MODE || 'rehearsal';
   if (!['rehearsal', 'live'].includes(mode)) throw Error('BOOKING_MODE must be rehearsal or live.');
   const liveEnabled = mode === 'live' && env.LIVE_BOOKING_ENABLED === 'true';
+  const providerIdentitySource = env.PROVIDER_IDENTITY_SOURCE || '';
+  if (!['', 'profile-person-id'].includes(providerIdentitySource)) throw Error('Invalid PROVIDER_IDENTITY_SOURCE.');
   return {
     production, port, host, origin: origin.origin, publicOrigin: origin.origin,
     secureCookies: production, cookieName: production ? '__Host-court_session' : 'court_session',
@@ -46,6 +48,7 @@ export function loadConfig(env = process.env) {
     headless: env.BROWSER_HEADLESS !== 'false', browserChannel: env.BROWSER_CHANNEL || undefined,
     browserExecutablePath: env.BROWSER_EXECUTABLE_PATH || undefined,
     providerIdentitySelector: env.PROVIDER_IDENTITY_SELECTOR || '',
+    providerIdentitySource,
     providerIdentityAttribute: env.PROVIDER_IDENTITY_ATTRIBUTE || '',
     loginAllowedHosts: (env.LOGIN_ALLOWED_HOSTS || '').split(',').map(h=>h.trim().toLowerCase()).filter(Boolean),
     loginTtlMs: 600000,
