@@ -29,6 +29,8 @@ The deployment host must support unprivileged user namespaces and permit the san
 
 ## Live readiness
 
+The observed official profile offers a disabled Person id field. `PROVIDER_IDENTITY_SOURCE=profile-person-id` enables a fresh DOM check on `/members/profile/myprofile` in a separate page of the same isolated context. Only its hash is retained as the identity. Validate this against the actual saved account session before enabling booking. Setting `BOOKING_MODE=live` while retaining `LIVE_BOOKING_ENABLED=false` allows connection and read-only tests without permitting automatic submissions.
+
 Verify real remote login on iPhone, Android and intended corporate browsers; inspect stable provider identity and normal reservation history; confirm applicable booking/automation rules and eligibility. Configure verified `PROVIDER_IDENTITY_SELECTOR` and `PROVIDER_IDENTITY_ATTRIBUTE` based on evidence, not a display name. Test concurrent execution on local fixtures, never by load-testing the official provider.
 
 Only after validation deliberately set `BOOKING_MODE=live` and `LIVE_BOOKING_ENABLED=true` and restart. Each user still must connect their own account, test the exact plan and authorize the schedule. Uncertain submissions remain stopped for review. A successful UI marker is not independent reservation-history reconciliation.

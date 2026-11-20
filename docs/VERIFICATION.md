@@ -51,6 +51,12 @@ Browser layout emulation, when performed, is not a substitute for testing on phy
 
 ## Release state
 
+### Account onboarding follow-up
+
+The owner created a scheduler account and completed a two-hour synthetic rehearsal through public HTTPS. No official reservation was made. The official profile UI exposes a disabled Person id input (`data-test-id="id-field"`). The new opt-in `PROVIDER_IDENTITY_SOURCE=profile-person-id` reads this visible field from a separate profile page in the same isolated context, hashes it, and rechecks it before submission. A local browser fixture verifies changed identities are rejected even when the display name matches, with no final booking clicks. Rehearsal/live overlap checks are now separated. The suites passed 21 unit/integration checks and 8 browser checks.
+
+The personal host has moved to connection-only setup (`BOOKING_MODE=live`, `LIVE_BOOKING_ENABLED=false`) so the owner can authenticate in the isolated browser. Actual saved-session validation remains pending. Remote typing controls now appear above the website image and stay visible while scrolling. Automatic booking remains disabled.
+
 ### Windows personal host check — 20 November 2026
 
 The personal Windows host passed all 20 unit/integration checks, all 7 browser checks and syntax validation of 23 JavaScript files. Its limited per-user startup task was registered and observed running. The actual task opened a sandboxed Edge browser and verified two isolated contexts using entirely synthetic intercepted pages. A graceful stop/start was observed in the host log and followed by a healthy local `/healthz` response with the scheduler running in rehearsal. This verifies the current logged-in session; an actual reboot has not been tested.
