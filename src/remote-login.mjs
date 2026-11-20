@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { signInOfficial } from './login-form.mjs';
 
 const fail = (message, status = 409) => Object.assign(new Error(message), {status,statusCode:status});
 const KEYS = new Set(['Tab','Shift+Tab','Enter','Backspace','Delete','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Control+A']);
@@ -8,6 +9,7 @@ export class RemoteLoginManager {
   constructor({provider,repository,config,assertIdle=()=>{},now=()=>Date.now()}) {
     this.provider=provider; this.repo=repository; this.config=config; this.assertIdle=assertIdle; this.now=now;
     this.sessions=new Map(); this.starting=new Set(); this.generations=new Map(); this.closed=false;
+    this.signInAttempts=new Map();
     this.ttl=Math.min(config.loginTtlMs ?? 10*60*1000, 15*60*1000);
     this.timer=setInterval(()=>this.expire().catch(()=>{}),30000); this.timer.unref?.();
   }
@@ -58,8 +60,25 @@ export class RemoteLoginManager {
       if(this.sessions.get(id)!==s)throw fail('Connection session was closed.',410);
       const u=new URL(s.page.url());
       const size=s.page.viewportSize()??{width:1100,height:820};
-      return {image:`data:image/jpeg;base64,${raw.toString('base64')}`,url:u.origin+u.pathname,...size,status:'connecting'};
+      const authenticated=u.origin===new URL(this.config.bookingUrl).origin&&u.pathname==='/bookings/rent'&&await s.page.evaluate(()=>!!document.querySelector('[data-test-id="native-date-picker-input"]')&&!!globalThis.CourtAdapter?.account()).catch(()=>false);
+      return {image:`data:image/jpeg;base64,${raw.toString('base64')}`,url:u.origin+u.pathname,...size,status:'connecting',authenticated};
     });
+  }
+  async credentials(userId,id,input){
+    try{
+      if(!input||Object.keys(input).some(k=>!['email','password'].includes(k))||typeof input.email!=='string'||!/^\S+@\S+\.\S+$/.test(input.email)||input.email.length>254||typeof input.password!=='string'||!input.password||input.password.length>256||/[\x00\r\n]/.test(input.password))throw fail('Enter your booking email and password.',400);
+      const result=await this.withSession(userId,id,async s=>{
+        const now=this.now();
+        for(const [key,item] of this.signInAttempts)if(now-item.at>15*60000)this.signInAttempts.delete(key);
+        const attempts=this.signInAttempts.get(userId)??{at:now,count:0};
+        if(attempts.count>=5)throw fail('Too many sign-in attempts. Wait 15 minutes before trying again.',429);
+        attempts.count++;this.signInAttempts.set(userId,attempts);
+        try{return await signInOfficial(s.page,{email:input.email.trim(),password:input.password});}
+        catch(error){if(error.status)throw error;throw fail('The official sign-in could not be completed. Try again or use the official sign-in screen.');}
+      });
+      if(result.status!=='signed_in')return result;
+      return {status:'connected',connection:await this.finish(userId,id)};
+    }finally{if(input&&typeof input==='object')input.password='';}
   }
   async input(userId,id,input) {
     if(!input||typeof input!=='object')throw fail('Invalid input.',400);

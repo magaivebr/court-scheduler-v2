@@ -130,12 +130,13 @@ export function createApp({config,repository,runner}) {
         return json(res,201,await runner.connectionStart(userId));
       }
       if(url.pathname==='/api/connection'&&method==='DELETE')return json(res,200,{connection:await runner.disconnect(userId)});
-      const connectionRoute=url.pathname.match(/^\/api\/connection\/([0-9a-f-]{36})(?:\/(frame|input|finish))?$/);
+      const connectionRoute=url.pathname.match(/^\/api\/connection\/([0-9a-f-]{36})(?:\/(frame|input|finish|credentials))?$/);
       if(connectionRoute){
         const [,id,action]=connectionRoute;
         if(!action&&method==='DELETE')return json(res,200,await runner.cancelConnection(userId,id));
         if(action==='frame'&&method==='GET')return json(res,200,await runner.connectionFrame(userId,id));
         if(action==='input'&&method==='POST')return json(res,200,await runner.connectionInput(userId,id,await body(req)));
+        if(action==='credentials'&&method==='POST')return json(res,200,await runner.connectionCredentials(userId,id,await body(req)));
         if(action==='finish'&&method==='POST')return json(res,200,{connection:await runner.connectionFinish(userId,id)});
       }
       throw new HttpError(404,'Not found.');

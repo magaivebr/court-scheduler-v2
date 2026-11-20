@@ -33,6 +33,7 @@ export class CourtRunner {
   connectionStart(userId){return this.remote.start(userId);}
   connectionFrame(userId,id){return this.remote.frame(userId,id);}
   connectionInput(userId,id,input){return this.remote.input(userId,id,input);}
+  connectionCredentials(userId,id,input){return this.remote.credentials(userId,id,input);}
   connectionFinish(userId,id){return this.remote.finish(userId,id);}
   cancelConnection(userId,id){return this.remote.cancel(userId,id);}
   async disconnect(userId) {
