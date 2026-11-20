@@ -105,6 +105,21 @@ test('submission grant is fenced, single-use and coordinates competing users',()
   }finally{f.close();}
 });
 
+test('completed rehearsals do not block live plans, while live overlaps remain blocked',()=>{
+  const f=fixture();try{
+    const user=addUser(f.repository),rehearsalJob=testedJob(f.repository,user,f.config);
+    f.repository.updateJob(user.id,rehearsalJob.id,{status:'confirmed'});
+    Object.assign(f.config,{mode:'live',liveEnabled:true,production:true});
+    f.repository.saveConnection(user.id,{status:'connected',accountLabel:'Fixture live account',identity:{kind:'configured_dom_identity',id:'fixture-stable-identity',verified:true}});
+    const checked=()=>{
+      const job=f.repository.createJob(user.id,plan(),f.config.mode);
+      return f.repository.updateJob(user.id,job.id,{checkedAt:new Date().toISOString(),checkedAccount:'Fixture live account'});
+    };
+    const first=checked();assert.equal(f.repository.armJob(user.id,first.id,{authorization:true}).status,'armed');
+    const second=checked();assert.throws(()=>f.repository.armJob(user.id,second.id,{authorization:true}),/overlapping plan/);
+  }finally{f.close();}
+});
+
 test('interrupted submission survives database reopen and is never rearmed',()=>{
   const f=fixture(),user=addUser(f.repository),job=testedJob(f.repository,user,f.config);
   try{
