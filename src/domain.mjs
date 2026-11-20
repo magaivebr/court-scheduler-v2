@@ -15,10 +15,11 @@ export function validatePlan(input, now = Date.now()) {
   const today = Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO(TIME_ZONE).toPlainDate();
   if (Temporal.PlainDate.compare(date, today) < 0 || Temporal.PlainDate.compare(date, today.add({ days: 31 })) > 0) throw new HttpError(400, 'Choose a date within the next 31 days.');
   if (!Number.isInteger(input.start) || input.start < 0 || input.start > 22) throw new HttpError(400, 'Choose two consecutive hourly sessions.');
-  if (!Array.isArray(input.courts) || input.courts.length < 1 || input.courts.length > 3 || input.courts.some(c => ![1, 2, 3].includes(c)) || new Set(input.courts).size !== input.courts.length) throw new HttpError(400, 'Choose unique court preferences.');
-  if (typeof input.allowSwitch !== 'boolean' || typeof input.authorization !== 'boolean') throw new HttpError(400, 'Choose the court switching preference.');
+  // Accept old clients' fields, but new plans always use the automatic court policy.
+  if (input.courts !== undefined && (!Array.isArray(input.courts) || input.courts.length < 1 || input.courts.length > 3 || input.courts.some(c => ![1, 2, 3].includes(c)) || new Set(input.courts).size !== input.courts.length)) throw new HttpError(400, 'Invalid courts.');
+  if ((input.allowSwitch !== undefined && typeof input.allowSwitch !== 'boolean') || typeof input.authorization !== 'boolean') throw new HttpError(400, 'Invalid booking authorization.');
   if (typeof input.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(input.idempotencyKey)) throw new HttpError(400, 'A valid request identifier is required.');
-  return { date, start: input.start, courts: [...input.courts], allowSwitch: input.allowSwitch, authorization: false, idempotencyKey: input.idempotencyKey, releaseAt: releaseForDate(date) };
+  return { date, start: input.start, courts: [1, 2, 3], allowSwitch: true, authorization: false, idempotencyKey: input.idempotencyKey, releaseAt: releaseForDate(date) };
 }
 export function validateRegistration(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'Enter your account details.');

@@ -132,14 +132,9 @@ export class BookingProvider {
   async test(job, connection, storageState) {
     const prepared = await this.prepare(job, connection, storageState);
     try {
-      let common = job.courts.filter(c => prepared.available.every(list => list.includes(c)));
-      if (!job.allowSwitch && !common.length) throw message('No single permitted court is selectable for both hours.');
-      const tested = [];
-      for (let index = 0; index < 2; index++) {
+      const common = job.courts.filter(c => prepared.available.every(list => list.includes(c)));
+      const check = async (index, court) => {
         const page = prepared.pages[index];
-        const candidates = job.allowSwitch ? prepared.available[index] : common;
-        let selected;
-        for (const court of candidates) {
           try {
             await this.assertAccount(page, connection.accountLabel,connection.identity);
             await page.evaluate(async ({date,hour,court}) => {
@@ -149,14 +144,24 @@ export class BookingProvider {
               if (details.already || details.success || details.waiting) throw Error('This session already has a booking or pending result.');
               await CourtAdapter.closeModal();
             }, {date:job.date,hour:job.start+index,court});
-            selected = court; break;
-          } catch { await page.evaluate(() => CourtAdapter.closeModal()).catch(() => {}); }
+            return true;
+          } catch { await page.evaluate(() => CourtAdapter.closeModal()).catch(() => {}); return false; }
+      };
+      const result = courts => ({accountLabel:connection.accountLabel,tested:courts.map((court,index)=>({hour:job.start+index,court})),summary:'Both hourly dialogs were checked without submitting a reservation.'});
+      for (const court of common) {
+        if (await check(0,court) && await check(1,court)) return result([court,court]);
+      }
+      if (!job.allowSwitch) throw message('No single permitted court passed both hourly checks.');
+      const tested = [];
+      for (let index = 0; index < 2; index++) {
+        let selected;
+        for (const court of prepared.available[index]) {
+          if (await check(index,court)) { selected=court; break; }
         }
         if (!selected) throw message('The read-only test could not validate a permitted free session. Check membership, date and account on the official site.');
-        if (!job.allowSwitch) common = [selected];
-        tested.push({ hour:job.start+index, court:selected });
+        tested.push(selected);
       }
-      return { accountLabel:connection.accountLabel, tested, summary:'Both hourly dialogs were checked without submitting a reservation.' };
+      return result(tested);
     } finally { await this.closePrepared(prepared); }
   }
   async readyCandidate(prepared, job, index, court) {

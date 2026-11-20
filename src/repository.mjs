@@ -207,7 +207,17 @@ export class Repository {
   }
   releaseJob(userId,jobId,owner) { this.db.prepare('DELETE FROM account_locks WHERE user_id=? AND job_id=? AND owner=?').run(userId,jobId,owner); }
   beginAttempt(userId,jobId,{hour,court,leaseOwner}) {
+    return this.transaction(()=>this.#beginAttempt(userId,jobId,{hour,court,leaseOwner}));
+  }
+  beginPairAttempts(userId,jobId,{court,leaseOwner}) {
     return this.transaction(()=>{
+      const job=this.getJob(userId,jobId);
+      if(!job)throw new HttpError(404,'Booking plan not found.');
+      // Either both local claims commit, or neither does. Official bookings remain separate.
+      return [0,1].map(index=>this.#beginAttempt(userId,jobId,{hour:job.start+index,court,leaseOwner}));
+    });
+  }
+  #beginAttempt(userId,jobId,{hour,court,leaseOwner}) {
       this.assertLease('scheduler',leaseOwner);
       const job=this.getJob(userId,jobId), now=Date.now();
       if(!job||job.status!=='running'||!job.authorization||![job.start,job.start+1].includes(hour)||!job.courts.includes(court))throw new HttpError(409,'This submission is outside the authorized plan.');
@@ -220,7 +230,6 @@ export class Repository {
       this.db.prepare('INSERT INTO attempts(id,user_id,job_id,hour,court,status,created_at) VALUES(?,?,?,?,?,?,?)').run(attempt.id,userId,jobId,hour,court,'pending',new Date().toISOString());
       this.addEvent(userId,jobId,`Submission intent recorded for court ${court}, ${String(hour).padStart(2,'0')}:00.`);
       return attempt;
-    });
   }
   finishAttempt(userId,jobId,attemptId,{status,evidence=null,message=null}) {
     if(!['confirmed','unknown','rejected'].includes(status))throw Error('Invalid attempt result.');

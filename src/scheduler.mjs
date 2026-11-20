@@ -146,11 +146,12 @@ export class CourtRunner {
       if(this.now()>runAt+MAX_LATENESS)throw fail('Preparation missed the release window. No booking was submitted.');
       await this.repo.updateJob(userId,job.id,{status:'running'});
       await this.repo.addEvent(userId,job.id,this.config.mode==='rehearsal'?'Rehearsal started. These results are simulated.':'Release reached. Starting the authorized booking attempt.');
-      if(job.allowSwitch) {
-        // Each hour has one durable grant. Independent accounts and hours can progress in parallel.
+      const paired=await this.runSameCourt(record);
+      if(!paired && job.allowSwitch) {
+        await this.repo.addEvent(userId,job.id,'No court passed both hour checks with both claims available. Trying each hour separately; a court change is allowed.');
         await Promise.allSettled([this.runHour(record,0),this.runHour(record,1)]);
-      } else {
-        await this.runSameCourt(record);
+      } else if(!paired) {
+        await this.repo.addEvent(userId,job.id,'No single permitted court passed both hour checks. Nothing was submitted.');
       }
       const latest=await this.repo.getJob(userId,job.id);
       if(!latest||(!ACTIVE.has(latest.status)&&!(latest.results?.length)))return;
@@ -201,20 +202,17 @@ export class CourtRunner {
     const {job}=record;
     const candidates=job.courts.filter(c=>record.prepared.available.every(list=>list.includes(c)));
     for(const court of candidates){
-      try {await Promise.all([this.ready(record,0,court),this.ready(record,1,court)]);}catch{continue;}
-      // Grants are acquired separately because provider bookings are not an atomic pair.
-      // Once either hour receives a grant, never move the pair to another court.
-      let first;
-      try{first=await this.repo.beginAttempt(job.userId,job.id,{hour:job.start,court,leaseOwner:this.owner});}
+      // Wait for both pages to finish before opening dialogs for the next candidate.
+      const readiness=await Promise.allSettled([this.ready(record,0,court),this.ready(record,1,court)]);
+      if(readiness.some(result=>result.status==='rejected'))continue;
+      let attempts;
+      try{attempts=await this.repo.beginPairAttempts(job.userId,job.id,{court,leaseOwner:this.owner});}
       catch(error){if(error.code==='RESOURCE_BUSY')continue;throw error;}
-      const writes=[this.submit(record,0,court,first)];
-      try{
-        const second=await this.repo.beginAttempt(job.userId,job.id,{hour:job.start+1,court,leaseOwner:this.owner});
-        writes.push(this.submit(record,1,court,second));
-      }catch{await this.repo.addEvent(job.userId,job.id,'The second hour could not receive a submission grant. No other court was substituted.');}
-      await Promise.allSettled(writes);return;
+      // Once either hour might have been submitted, never retry it on another court.
+      await Promise.allSettled(attempts.map((attempt,index)=>this.submit(record,index,court,attempt)));
+      return true;
     }
-    await this.repo.addEvent(job.userId,job.id,'No single permitted court passed both hour checks. Nothing was submitted.');
+    return false;
   }
   async stop() {
     this.stopping=true;this.running=false;clearInterval(this.timer);
