@@ -21,7 +21,7 @@ node --env-file=.env scripts/admin.mjs create-invite --name "First participant" 
 npm start
 ```
 
-Open http://127.0.0.1:4318 and use the one-use invitation to create an account. Connect a rehearsal account, choose sessions, create a draft, test it, then explicitly authorize the rehearsal. Rehearsal execution is separate from the official release instant.
+Open http://127.0.0.1:4318 and use the one-use invitation to create an account. Connect a rehearsal account, choose the date and first hour, then select **Schedule rehearsal**. This one click runs the checks and authorizes the two displayed sessions; there is no review dialog or separate test button. Wait for server acceptance in My schedules. Rehearsal execution is separate from the official release instant.
 
 For the host's real browser connection, run `npx playwright install chromium`, or configure `BROWSER_CHANNEL=msedge` to use an existing permitted compatible Edge browser. Nothing is installed on participant devices.
 
