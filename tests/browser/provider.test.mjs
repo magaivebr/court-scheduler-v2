@@ -44,16 +44,16 @@ class FixtureProvider extends BookingProvider {
     try{const page=await this.officialPage(context);return {status:'connected',accountLabel:'Fixture Participant',identity:await this.readIdentity(page)};}finally{await context.close();}
   }
 }
-const job={id:'fixture-job',date:'2027-01-05',start:11,courts:[1,2,3],allowSwitch:true};
+const job={id:'fixture-job',date:'2027-01-05',start:11,durationHours:1,courts:[1,2,3],allowSwitch:true};
 const state={cookies:[],origins:[]};
 
-test('browser fixture validates both hourly dialogs without final clicks, then executes exactly one authorized hour',async()=>{
+test('browser fixture validates one hourly dialog without final clicks, then executes exactly one authorized hour',async()=>{
   const p=new FixtureProvider();let prepared;
   try{
     const connection=await p.connection();
-    const result=await p.test(job,connection,state);assert.equal(result.tested.length,2);assert.equal(p.clicks.length,0);
+    const result=await p.test(job,connection,state);assert.equal(result.tested.length,1);assert.equal(p.clicks.length,0);
     prepared=await p.prepare(job,connection,state);
-    assert.equal(prepared.pages.length,2);assert.equal(p.clicks.length,0);
+    assert.equal(prepared.pages.length,1);assert.equal(p.clicks.length,0);
     await p.readyCandidate(prepared,job,0,1);let grants=0;
     const out=await p.submit(prepared,job,0,1,async()=>{grants++;});
     assert.equal(grants,1);assert.deepEqual(out,{status:'confirmed',evidence:'official_booking_success'});
@@ -61,11 +61,11 @@ test('browser fixture validates both hourly dialogs without final clicks, then e
   }finally{await p.closePrepared(prepared);await p.close();}
 });
 
-test('read-only browser checks prefer a valid matching pair, then split only as backup',async()=>{
+test('read-only browser checks use only the selected hour with other courts as fallback',async()=>{
   for(const scenario of [
-    {courts:'(h===11?[1,2]:[2,3])',price:'window.fixturePrice',expected:[2,2]},
-    {courts:'[1,2,3]',price:"(h===12&&c===1?'€ 5.00':window.fixturePrice)",expected:[2,2]},
-    {courts:'(h===11?[1]:[3])',price:'window.fixturePrice',expected:[1,3]},
+    {courts:'(h===11?[1,2]:[2,3])',price:'window.fixturePrice',expected:[1]},
+    {courts:'[1,2,3]',price:"(h===11&&c===1?'€ 5.00':window.fixturePrice)",expected:[2]},
+    {courts:'(h===11?[1]:[3])',price:'window.fixturePrice',expected:[1]},
   ]){
     const p=new FixtureProvider();
     p.fixture=FIXTURE.replace('for(const c of [1,2,3])',`for(const c of ${scenario.courts})`).replace("'+window.fixturePrice+'",`'+${scenario.price}+'`);
@@ -82,8 +82,9 @@ test('browser fixture refuses changed account identity and nonzero prices before
     const connection=await p.connection();prepared=await p.prepare(job,connection,state);
     await prepared.pages[0].evaluate(()=>document.querySelector('#provider-identity').setAttribute('data-account-id','another-account'));
     await assert.rejects(p.readyCandidate(prepared,job,0,1),/identity changed/);
-    await prepared.pages[1].evaluate(()=>window.fixturePrice='€ 5.00');
-    await assert.rejects(p.readyCandidate(prepared,job,1,1),/verified.*0.00/);
+    await prepared.pages[0].evaluate(()=>{document.querySelector('#provider-identity').setAttribute('data-account-id','fixture-account-1');window.fixturePrice='€ 5.00';});
+    await assert.rejects(p.readyCandidate(prepared,job,0,1),/verified.*0.00/);
+    await assert.rejects(p.submit(prepared,job,1,1),/only its selected hour/);
     assert.equal(p.clicks.length,0);
   }finally{await p.closePrepared(prepared);await p.close();}
 });

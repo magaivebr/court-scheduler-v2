@@ -39,7 +39,7 @@ test('desktop and mobile: one scheduling click runs checks and persists the auth
     await page.locator('#service-notice.rehearsal').waitFor();
     assert.equal(await page.locator('#allow-switch, [data-prefer], [data-court]').count(),0);
     assert.equal(await page.locator('#review-dialog, #test-button, #authorization').count(),0);
-    assert.match(await page.locator('#booking-card').innerText(),/Same court for both hours first/);
+    assert.match(await page.locator('#booking-card').innerText(),/Any available court/);
     await assertNoOverflow(page);
     await page.locator('#account-button').click();
     await page.locator('#register-tab').click();
@@ -57,8 +57,9 @@ test('desktop and mobile: one scheduling click runs checks and persists the auth
     assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id).length,0,'Selecting sessions must not create or authorize a plan');
     await page.locator('#schedule-button').click();
     await waitVisible(page,'#schedules-view');
-    await page.waitForFunction(()=>document.querySelector('.job-badge')?.textContent==='Both hours booked',null,{timeout:15000});
-    assert.equal(await page.locator('.job-session').count(),2);
+    await page.waitForFunction(()=>document.querySelector('.job-badge')?.textContent==='Booked',null,{timeout:15000});
+    assert.equal(await page.locator('.job-session').count(),1);
+    assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id)[0].results[0].hour,11);
     assert.match(await page.locator('.mode-note').innerText(),/No real court reservation/);
     assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id).length,1);
     await page.setViewportSize({width:390,height:844});
@@ -72,8 +73,15 @@ test('desktop and mobile: one scheduling click runs checks and persists the auth
     await waitVisible(page,'#schedules-view');
     assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id).length,1,'Repeating the same selection must recover the accepted plan');
     await assertNoOverflow(page);
+    await page.locator('#new-schedule').click();await page.locator('[data-hour="12"]').click();
+    assert.equal(await page.locator('#booking-hours').innerText(),'12:00–13:00');
+    await page.locator('#schedule-button').click();await waitVisible(page,'#schedules-view');
+    await page.waitForFunction(()=>document.querySelectorAll('.job-badge.confirmed').length===2,null,{timeout:15000});
+    const saved=service.repository.listJobs(service.repository.findUser('fixture_player').id);
+    assert.equal(saved.length,2);assert.ok(saved.every(j=>j.durationHours===1&&j.results.length===1));
+    assert.deepEqual(saved.map(j=>j.results[0].hour).sort(),[11,12]);
     await page.reload();await page.locator('#account-name').filter({hasText:'Fixture Player'}).waitFor();
-    await page.locator('#schedules-tab').click();await page.locator('.job-badge.confirmed').waitFor();
+    await page.locator('#schedules-tab').click();await page.locator('.job-badge.confirmed').first().waitFor();
     assert.deepEqual(errors,[]);
     const stranger=await browser.newContext();
     const secondPage=await stranger.newPage();
@@ -138,7 +146,7 @@ test('direct scheduling stops on failed checks and recovers a lost acceptance wi
       await page.goto(origin);await page.locator('#account-name').filter({hasText:'Booking Fixture'}).waitFor();
       assert.equal(keys.length,0);
       await page.locator('#schedule-button').click();
-      await page.locator('#booking-progress').filter({hasText:'Checking your two sessions'}).waitFor();
+      await page.locator('#booking-progress').filter({hasText:'Checking your session'}).waitFor();
       assert.equal(await page.locator('#schedule-button').isDisabled(),true);
       assert.equal(await page.locator('#playing-date').isDisabled(),true);
       assert.equal(await page.locator('[data-hour="12"]').isDisabled(),true);
