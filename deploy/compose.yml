@@ -1,0 +1,40 @@
+services:
+  scheduler:
+    build:
+      context: ..
+    init: true
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4318
+      DATA_DIR: /app/.data
+    volumes:
+      - scheduler-data:/app/.data
+    expose:
+      - '4318'
+    shm_size: '1gb'
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp_profile.json
+    cap_drop:
+      - ALL
+  https:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      SCHEDULER_DOMAIN: ${SCHEDULER_DOMAIN:?Set SCHEDULER_DOMAIN in the private .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - scheduler
+volumes:
+  scheduler-data:
+  caddy-data:
+  caddy-config:

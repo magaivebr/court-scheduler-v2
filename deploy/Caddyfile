@@ -1,0 +1,5 @@
+{$SCHEDULER_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy scheduler:4318
+    header Strict-Transport-Security "max-age=31536000"
+}
