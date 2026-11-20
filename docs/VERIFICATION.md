@@ -6,9 +6,9 @@ Checked on 20 November 2026 in the Windows development workspace using Node.js 2
 
 | Command | Observed result |
 | --- | --- |
-| `npm test` | **27 passed, 0 failed, 0 skipped** |
+| `npm test` | **28 passed, 0 failed, 0 skipped** |
 | `npm run check` | **25 JavaScript files passed syntax checking** |
-| Browser tests | **15 passed across the provider, login and UI suites**; all 6 UI tests rerun for direct scheduling, with the 9 unchanged provider/login tests passing in the previous validation |
+| Browser tests | **15 passed across the provider, login and UI suites**, all rerun for one-hour scheduling |
 | `node --test tests/browser/provider.test.mjs` after enabling Chromium sandbox | **4 passed, 0 failed**, using installed Edge with approved external-process execution on Windows |
 
 The unit and integration suite uses generated users, local SQLite databases, synthetic provider behavior and mocked remote-browser operations. It does not log into KU Leuven or submit real reservations.
@@ -53,17 +53,17 @@ Browser layout emulation, when performed, is not a substitute for testing on phy
 
 ### Direct scheduling from the facilities page
 
-The review dialog, manual test button and consent checkbox have been removed. A single booking card shows the two hours, free price and automatic court policy next to Schedule booking (Schedule rehearsal in rehearsal mode). The labelled click authorizes that displayed selection. The client freezes selection controls, saves the plan, runs the existing server checks and submits explicit authorization only after a successful check. Server validation, isolated sessions, live-mode restrictions and submission fencing are unchanged.
+The review dialog, manual test button and consent checkbox have been removed. A single booking card shows one hour, free price and automatic court policy next to Schedule booking (Schedule rehearsal in rehearsal mode). The labelled click authorizes that displayed selection. The client freezes selection controls, saves the plan, runs the existing server checks and submits explicit authorization only after a successful check. Server validation, isolated sessions, live-mode restrictions and submission fencing are unchanged.
 
 Failures appear inline. A request identifier is retained for the current selection and account so a retry after a lost response can recover the existing accepted plan without another arming request. A schedule is accepted only when the server confirms it. Six UI browser tests pass, covering desktop/mobile one-click scheduling, repeat clicks, failed checks, lost acceptance recovery, disabled live mode, static Pages behavior and existing login flows. Syntax checking passed for all 25 JavaScript files. No real booking was submitted; live booking remains disabled.
 
-### Automatic court selection
+### One hour per schedule
 
-New plans consider all three courts automatically. Both read-only tests and execution try a valid same-court pair first; only when no pair passes the checks and local claim allocation do they fall back to selecting each hour separately. The interface no longer offers court rankings, exclusions or a switching checkbox. Previously stored plans retain their original authorization scope.
+Every new plan must explicitly declare durationHours: 1. The interface shows one 60-minute session, the provider prepares one isolated booking page, and the worker grants and submits only that selected hour. Any of the three courts may be used. The previous pair-selection path has been removed. Two hours require two independent schedules; there is no promise that they use the same court.
 
-Both local submission claims are acquired in one database transaction, so a conflict on the second hour rolls back the first claim and its event. This permits trying another matching court before the split-court fallback. Both readiness checks finish before another candidate is opened. The official reservations themselves are still two separate operations; partial or uncertain results are not automatically retried on other courts.
+Overlap detection permits adjacent hours and rejects duplicate hours. The submission ledger and provider reject attempts for a second hour. Older records without a duration remain two-hour history; they are not silently shortened and cannot be armed or executed by the new worker. Cached older clients must refresh before creating a plan.
 
-Regression checks cover normalization, atomic rollback, same-court priority, alternate matching courts, split-court fallback, competing accounts, uncertain results and removal of preference controls. All 27 unit/integration tests and 13 browser tests passed using synthetic data. No real reservation was submitted; automatic live booking remains disabled on the personal host.
+Regression checks cover one-hour validation, 30 isolated accounts, adjacent schedules under one account, duplicate rejection, out-of-scope submission refusal, uncertain outcomes, historical records and blocked legacy execution. The UI fixture creates one schedule, confirms exactly one result, then separately creates the next hour and verifies two independent schedules. No real reservation is submitted during these checks.
 
 ### Simplified booking sign-in
 
