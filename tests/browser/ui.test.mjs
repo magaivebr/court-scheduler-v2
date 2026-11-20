@@ -132,6 +132,8 @@ test('mobile remote login sends scaled inputs only to its own session and clears
     await page.locator('#account-button').click();
     await page.locator('#connect-provider').click();
     await waitVisible(page,'#remote-image');
+    await page.waitForFunction(()=>{const img=document.querySelector('#remote-image');return img.complete&&img.naturalWidth>0;});
+    await page.locator('#remote-image').scrollIntoViewIfNeeded();
     const rect=await page.locator('#remote-image').boundingBox();
     await page.locator('#remote-image').click({position:{x:rect.width/2,y:rect.height/2}});
     await page.locator('#remote-text').fill('synthetic fixture text');
@@ -142,8 +144,10 @@ test('mobile remote login sends scaled inputs only to its own session and clears
     await page.locator('#remote-close').click();
     await page.waitForTimeout(100);
     assert.equal(inputs[0].type,'click');
-    assert.ok(Math.abs(inputs[0].x-640)<=1);
-    assert.ok(Math.abs(inputs[0].y-450)<=1);
+    // Browser pointer coordinates round to rendered pixels; allow one such pixel
+    // after scaling back to the remote browser's larger viewport.
+    assert.ok(Math.abs(inputs[0].x-640)<=Math.ceil(1280/rect.width),JSON.stringify({click:inputs[0],rect}));
+    assert.ok(Math.abs(inputs[0].y-450)<=Math.ceil(900/rect.height),JSON.stringify({click:inputs[0],rect}));
     assert.equal(inputs[1].text,'synthetic fixture text');
     assert.equal(cancelled,true);
   }finally{await context.close();}
