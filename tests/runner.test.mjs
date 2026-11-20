@@ -56,6 +56,23 @@ test('shared court claims prevent four users from all confirming the same three 
   }finally{await runner.stop();repo.close();}
 });
 
+for(const scenario of [
+  {name:'matching court takes priority over the first available court',available:[[1,2],[2,3]],expected:[2,2]},
+  {name:'another matching court is tried when the first pair fails validation',available:[[1,2,3],[1,2,3]],invalid:(i,c)=>i===1&&c===1,expected:[2,2]},
+  {name:'different courts are used automatically when no matching court exists',available:[[1],[3]],expected:[1,3]},
+  {name:'different courts remain a backup when all common pairs fail validation',available:[[1,2],[1,2]],invalid:(i,c)=>i===0?c===2:c===1,expected:[1,2]},
+])test(scenario.name,async()=>{
+  const c=config('live'),repo=new Repository(c),submissions=[];
+  const provider={...quietProvider(),test:async(j,connection)=>({accountLabel:connection.accountLabel,summary:'Fixture check.'}),prepare:async()=>({available:scenario.available}),readyCandidate:async(_p,_j,i,court)=>{if(scenario.invalid?.(i,court))throw Error('Unavailable fixture court');},submit:async(_p,_j,i,court,beforeClick)=>{await beforeClick();submissions.push([i,court]);return {status:'confirmed',evidence:'fixture'};}};
+  const runner=new CourtRunner({repository:repo,config:c,provider});
+  try{
+    const u=account(repo,1,'live'),j=plan(repo,u,0,'live');await runner.testJob(u.id,j);repo.armJob(u.id,j.id,{authorization:true});repo.updateJob(u.id,j.id,{runAt:new Date(Date.now()-10).toISOString()});
+    await runner.start();await settle(runner,repo,[j]);
+    assert.equal(repo.getJob(u.id,j.id).status,'confirmed');
+    assert.deepEqual(submissions.sort((a,b)=>a[0]-b[0]).map(a=>a[1]),scenario.expected);
+  }finally{await runner.stop();repo.close();}
+});
+
 test('ambiguous provider outcomes keep durable unknown attempts and never auto-repeat',async()=>{
   const c=config('live'),repo=new Repository(c);let submissions=0;
   const provider={...quietProvider(),test:async(j,connection)=>({accountLabel:connection.accountLabel,summary:'Fixture read-only check.'}),prepare:async()=>({available:[[1,2,3],[1,2,3]]}),readyCandidate:async()=>{},submit:async(_p,_j,_i,_c,beforeClick)=>{await beforeClick();submissions++;throw Error('Synthetic network failure after click');}};

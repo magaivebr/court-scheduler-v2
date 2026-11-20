@@ -35,6 +35,32 @@ test('Brussels release follows calendar days across both DST transitions',()=>{
   assert.throws(()=>validatePlan({...plan(),userId:'somebody-else'}),/Unknown/);
 });
 
+test('new plans always consider all courts and permit a change as backup',()=>{
+  for(const fields of [{courts:undefined,allowSwitch:undefined},{courts:[3],allowSwitch:false}]){
+    const value=plan(fields);assert.deepEqual(value.courts,[1,2,3]);assert.equal(value.allowSwitch,true);
+    assert.equal(value.authorization,false);
+  }
+});
+
+test('pair claims roll back both hours and events if the second hour is busy',()=>{
+  const f=fixture();try{
+    const a=addUser(f.repository,1),b=addUser(f.repository,2),ja=testedJob(f.repository,a,f.config),jb=testedJob(f.repository,b,f.config);
+    f.repository.acquireLease('scheduler','pair-worker',30000);
+    for(const [user,job] of [[a,ja],[b,jb]]){
+      f.repository.armJob(user.id,job.id,{authorization:true});
+      f.repository.updateJob(user.id,job.id,{status:'running',runAt:new Date(Date.now()-100).toISOString()});
+      f.repository.claimJob(user.id,job.id,'pair-worker');
+    }
+    f.repository.beginAttempt(a.id,ja.id,{hour:12,court:1,leaseOwner:'pair-worker'});
+    const events=f.repository.getJob(b.id,jb.id).events.length;
+    assert.throws(()=>f.repository.beginPairAttempts(b.id,jb.id,{court:1,leaseOwner:'pair-worker'}),error=>error.code==='RESOURCE_BUSY');
+    const rolledBack=f.repository.getJob(b.id,jb.id);
+    assert.equal(rolledBack.results.length,0);assert.equal(rolledBack.events.length,events);
+    const pair=f.repository.beginPairAttempts(b.id,jb.id,{court:2,leaseOwner:'pair-worker'});
+    assert.deepEqual(pair.map(a=>[a.hour,a.court]),[[11,2],[12,2]]);
+  }finally{f.close();}
+});
+
 test('production rejects missing HTTPS and vault key',()=>{
   assert.throws(()=>loadConfig({NODE_ENV:'production'}),/HTTPS/);
   const dir=mkdtempSync(path.join(os.tmpdir(),'court-v2-config-'));
