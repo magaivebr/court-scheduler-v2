@@ -8,7 +8,7 @@ Checked on 20 November 2026 in the Windows development workspace using Node.js 2
 | --- | --- |
 | `npm test` | **27 passed, 0 failed, 0 skipped** |
 | `npm run check` | **25 JavaScript files passed syntax checking** |
-| Browser tests | **13 passed across the provider, login and UI suites** |
+| Browser tests | **15 passed across the provider, login and UI suites**; all 6 UI tests rerun for direct scheduling, with the 9 unchanged provider/login tests passing in the previous validation |
 | `node --test tests/browser/provider.test.mjs` after enabling Chromium sandbox | **4 passed, 0 failed**, using installed Edge with approved external-process execution on Windows |
 
 The unit and integration suite uses generated users, local SQLite databases, synthetic provider behavior and mocked remote-browser operations. It does not log into KU Leuven or submit real reservations.
@@ -50,6 +50,12 @@ No real booking, cancellation or authenticated production login was performed fo
 Browser layout emulation, when performed, is not a substitute for testing on physical mobile devices. A GitHub Pages deployment only publishes the public interface; it does not provision or validate the private booking server.
 
 ## Release state
+
+### Direct scheduling from the facilities page
+
+The review dialog, manual test button and consent checkbox have been removed. A single booking card shows the two hours, free price and automatic court policy next to Schedule booking (Schedule rehearsal in rehearsal mode). The labelled click authorizes that displayed selection. The client freezes selection controls, saves the plan, runs the existing server checks and submits explicit authorization only after a successful check. Server validation, isolated sessions, live-mode restrictions and submission fencing are unchanged.
+
+Failures appear inline. A request identifier is retained for the current selection and account so a retry after a lost response can recover the existing accepted plan without another arming request. A schedule is accepted only when the server confirms it. Six UI browser tests pass, covering desktop/mobile one-click scheduling, repeat clicks, failed checks, lost acceptance recovery, disabled live mode, static Pages behavior and existing login flows. Syntax checking passed for all 25 JavaScript files. No real booking was submitted; live booking remains disabled.
 
 ### Automatic court selection
 
