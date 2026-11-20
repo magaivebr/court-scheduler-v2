@@ -30,7 +30,7 @@ async function assertNoOverflow(page){
 }
 async function waitVisible(page,selector){await page.locator(selector).waitFor({state:'visible',timeout:12000});}
 
-test('desktop and mobile: private account, test, explicit consent, durable schedule and results',{timeout:40000},async()=>{
+test('desktop and mobile: one scheduling click runs checks and persists the authorized result',{timeout:40000},async()=>{
   const context=await browser.newContext({viewport:{width:1440,height:1000}});
   const page=await context.newPage();
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
@@ -38,8 +38,8 @@ test('desktop and mobile: private account, test, explicit consent, durable sched
     await page.goto(origin);
     await page.locator('#service-notice.rehearsal').waitFor();
     assert.equal(await page.locator('#allow-switch, [data-prefer], [data-court]').count(),0);
-    assert.equal(await page.locator('.court-row').count(),3);
-    assert.match(await page.locator('.schedule-section').innerText(),/Same court for both hours first/);
+    assert.equal(await page.locator('#review-dialog, #test-button, #authorization').count(),0);
+    assert.match(await page.locator('#booking-card').innerText(),/Same court for both hours first/);
     await assertNoOverflow(page);
     await page.locator('#account-button').click();
     await page.locator('#register-tab').click();
@@ -54,16 +54,8 @@ test('desktop and mobile: private account, test, explicit consent, durable sched
     await page.locator('#rehearsal-connect').click();
     await page.waitForFunction(()=>document.querySelector('#connection-card').textContent.includes('Rehearsal account connected'));
     await page.locator('[data-close="account-dialog"]').last().click();
-    await page.locator('#review-button').click();
-    assert.match(await page.locator('#review-summary').innerText(),/Different courts only as a backup/);
-    assert.equal(await page.locator('#arm-button').isDisabled(),true);
-    assert.equal(await page.locator('#authorization').isDisabled(),true);
-    await page.locator('#test-button').click();
-    await page.locator('#review-progress.success').waitFor();
-    assert.equal(await page.locator('#arm-button').isDisabled(),true,'Test must not imply consent');
-    await page.locator('#authorization').check();
-    assert.equal(await page.locator('#arm-button').isEnabled(),true);
-    await page.locator('#arm-button').click();
+    assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id).length,0,'Selecting sessions must not create or authorize a plan');
+    await page.locator('#schedule-button').click();
     await waitVisible(page,'#schedules-view');
     await page.waitForFunction(()=>document.querySelector('.job-badge')?.textContent==='Both hours booked',null,{timeout:15000});
     assert.equal(await page.locator('.job-session').count(),2);
@@ -71,15 +63,17 @@ test('desktop and mobile: private account, test, explicit consent, durable sched
     assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id).length,1);
     await page.setViewportSize({width:390,height:844});
     await assertNoOverflow(page);
-    await page.reload();
-    await page.locator('#account-name').filter({hasText:'Fixture Player'}).waitFor();
     await page.locator('#schedules-tab').click();
     await page.locator('.job-badge.confirmed').waitFor();
     await assertNoOverflow(page);
     await page.locator('#facilities-tab').click();
     await assertNoOverflow(page);
-    await page.locator('#review-button').click();
+    await page.locator('#schedule-button').click();
+    await waitVisible(page,'#schedules-view');
+    assert.equal(service.repository.listJobs(service.repository.findUser('fixture_player').id).length,1,'Repeating the same selection must recover the accepted plan');
     await assertNoOverflow(page);
+    await page.reload();await page.locator('#account-name').filter({hasText:'Fixture Player'}).waitFor();
+    await page.locator('#schedules-tab').click();await page.locator('.job-badge.confirmed').waitFor();
     assert.deepEqual(errors,[]);
     const stranger=await browser.newContext();
     const secondPage=await stranger.newPage();
@@ -103,13 +97,77 @@ test('GitHub Pages mode exposes no credential entry or runnable schedule',{timeo
     await page.locator('#account-button').click();
     assert.equal(await page.locator('#auth-dialog').isVisible(),false);
     assert.equal(await page.locator('#auth-password').isVisible(),false);
-    await page.locator('#review-button').click();
-    await waitVisible(page,'#review-dialog');
-    assert.equal(await page.locator('#test-button').isDisabled(),true);
-    assert.equal(await page.locator('#arm-button').isDisabled(),true);
+    assert.equal(await page.locator('#schedule-button').isDisabled(),true);
+    assert.equal(await page.locator('#review-dialog').count(),0);
     await assertNoOverflow(page);
     await page.setViewportSize({width:1440,height:1000});
     await assertNoOverflow(page);
+  }finally{await context.close();}
+});
+
+test('direct scheduling stops on failed checks and recovers a lost acceptance without duplicate arming',async()=>{
+  for(const width of [1440,390]){
+    const context=await browser.newContext({viewport:{width,height:844}}),page=await context.newPage();
+    let job=null,tests=0,arms=0,releaseCheck;
+    const keys=[];
+    const gate=new Promise(resolve=>{releaseCheck=resolve;});
+    try{
+      await page.route('**/api/**',async route=>{
+        const request=route.request(),url=new URL(request.url());
+        if(url.pathname==='/api/config')return route.fulfill({json:{mode:'rehearsal',liveEnabled:false}});
+        if(url.pathname==='/api/me')return route.fulfill({json:{user:{id:'fixture',name:'Booking Fixture'},csrf:'fixture-csrf',connection:{status:'simulated',accountLabel:'Fixture'},jobs:[]}});
+        if(url.pathname==='/api/jobs'&&request.method()==='GET')return route.fulfill({json:{jobs:job?[job]:[]}});
+        assert.equal(request.headers()['x-csrf-token'],'fixture-csrf');
+        if(url.pathname==='/api/jobs'){
+          const body=request.postDataJSON();keys.push(body.idempotencyKey);assert.equal(body.authorization,false);
+          job??={id:'fixture-job',...body,courts:[1,2,3],allowSwitch:true,status:'draft',mode:'rehearsal',releaseAt:new Date().toISOString(),results:[]};
+          return route.fulfill({json:{job}});
+        }
+        if(url.pathname.endsWith('/test')){
+          tests++;
+          if(tests===1){await gate;return route.fulfill({status:409,json:{error:'Synthetic check failed.'}});}
+          job.checkedAt=new Date().toISOString();return route.fulfill({json:{job}});
+        }
+        if(url.pathname.endsWith('/arm')){
+          assert.equal(request.postDataJSON().authorization,true);arms++;
+          job={...job,status:'armed',authorization:true};
+          return route.fulfill({status:503,json:{error:'Synthetic lost acceptance response.'}});
+        }
+        return route.fulfill({status:404,json:{error:'Not found'}});
+      });
+      await page.goto(origin);await page.locator('#account-name').filter({hasText:'Booking Fixture'}).waitFor();
+      assert.equal(keys.length,0);
+      await page.locator('#schedule-button').click();
+      await page.locator('#booking-progress').filter({hasText:'Checking your two sessions'}).waitFor();
+      assert.equal(await page.locator('#schedule-button').isDisabled(),true);
+      assert.equal(await page.locator('#playing-date').isDisabled(),true);
+      assert.equal(await page.locator('[data-hour="12"]').isDisabled(),true);
+      await assertNoOverflow(page);
+      releaseCheck();await page.locator('#booking-error').filter({hasText:'Synthetic check failed'}).waitFor();
+      assert.equal(arms,0);assert.equal(await page.locator('#schedule-button').isEnabled(),true);
+      await page.locator('#schedule-button').click();
+      await page.locator('#booking-error').filter({hasText:'Synthetic lost acceptance'}).waitFor();
+      assert.match(await page.locator('#booking-progress').innerText(),/Check My schedules/);
+      await page.locator('#schedule-button').click();await waitVisible(page,'#schedules-view');
+      assert.equal(tests,2);assert.equal(arms,1);assert.equal(keys.length,3);assert.equal(new Set(keys).size,1);
+      assert.equal(await page.locator('.job-card').count(),1);
+    }finally{releaseCheck();await context.close();}
+  }
+});
+
+test('direct scheduling remains disabled when the host has not enabled live booking',async()=>{
+  const context=await browser.newContext(),page=await context.newPage();let writes=0;
+  try{
+    await page.route('**/api/**',route=>{
+      if(route.request().method()!=='GET')writes++;
+      const url=new URL(route.request().url());
+      if(url.pathname==='/api/config')return route.fulfill({json:{mode:'live',liveEnabled:false}});
+      if(url.pathname==='/api/me')return route.fulfill({json:{user:{id:'fixture',name:'Connected Fixture'},csrf:'fixture',connection:{status:'connected'},jobs:[]}});
+      return route.fulfill({json:{jobs:[]}});
+    });
+    await page.goto(origin);await page.locator('#account-name').filter({hasText:'Connected Fixture'}).waitFor();
+    assert.equal(await page.locator('#schedule-button').isDisabled(),true);assert.equal(writes,0);
+    assert.equal(await page.locator('#review-dialog').count(),0);
   }finally{await context.close();}
 });
 
