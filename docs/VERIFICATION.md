@@ -6,9 +6,9 @@ Checked on 20 November 2026 in the Windows development workspace using Node.js 2
 
 | Command | Observed result |
 | --- | --- |
-| `npm test` | **20 passed, 0 failed, 0 skipped** |
-| `npm run check` | **18 JavaScript files passed syntax checking** |
-| `npm run test:browser` | **7 passed, 0 failed**, reported by the browser QA run |
+| `npm test` | **21 passed, 0 failed, 0 skipped** |
+| `npm run check` | **25 JavaScript files passed syntax checking** |
+| Browser tests | **12 passed across the provider, login and UI suites**; changed login/UI suites rerun after final functional edits |
 | `node --test tests/browser/provider.test.mjs` after enabling Chromium sandbox | **4 passed, 0 failed**, using installed Edge with approved external-process execution on Windows |
 
 The unit and integration suite uses generated users, local SQLite databases, synthetic provider behavior and mocked remote-browser operations. It does not log into KU Leuven or submit real reservations.
@@ -50,6 +50,12 @@ No real booking, cancellation or authenticated production login was performed fo
 Browser layout emulation, when performed, is not a substitute for testing on physical mobile devices. A GitHub Pages deployment only publishes the public interface; it does not provision or validate the private booking server.
 
 ## Release state
+
+### Simplified booking sign-in
+
+The default connection view is now a normal email/password form. Credentials go only through the authenticated, CSRF-protected private service into the official login form in that user's isolated browser. The fixed official origin and login path are checked before filling and submitting. Password fields are cleared, raw browser errors are sanitized, and no password is persisted. Five credential attempts per scheduler account are allowed in a 15-minute window. A successful sign-in calls the existing identity verification and encrypted-session save automatically. Official-screen sign-in remains available for university SSO and extra verification; it also detects the signed-in booking page and attempts session saving automatically.
+
+Synthetic browser tests cover success, rejection, password clearing, wrong-origin refusal, owner checks, automatic saving, and the compact form on desktop and mobile. Real credential submission through the new form still needs the account owner's verification. The host remains in connection-only mode with automatic booking disabled.
 
 ### Account onboarding follow-up
 
