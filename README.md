@@ -21,7 +21,7 @@ node --env-file=.env scripts/admin.mjs create-invite --name "First participant" 
 npm start
 ```
 
-Open http://127.0.0.1:4318 and use the one-use invitation to create an account. Connect a rehearsal account, choose the date and first hour, then select **Schedule rehearsal**. This one click runs the checks and authorizes the two displayed sessions; there is no review dialog or separate test button. Wait for server acceptance in My schedules. Rehearsal execution is separate from the official release instant.
+Open http://127.0.0.1:4318 and use the one-use invitation to create an account. Connect a rehearsal account, choose the date and hour, then select **Schedule rehearsal**. This one click runs the checks and authorizes the displayed one-hour session; there is no review dialog or separate test button. Wait for server acceptance in My schedules. For two hours, create two separate schedules. Rehearsal execution is separate from the official release instant.
 
 For the host's real browser connection, run `npx playwright install chromium`, or configure `BROWSER_CHANNEL=msedge` to use an existing permitted compatible Edge browser. Nothing is installed on participant devices.
 
@@ -46,4 +46,4 @@ Runtime `.data/` and private `.env` are excluded from Git and Docker builds. Pro
 
 Each scheduler user owns their connection and jobs. Reconnect/disconnect is isolated. A visible account display name alone is insufficient to verify unique provider identity, so live arming requires a verified stable identity contract. No selector is invented. Disconnect removes local access but does not remotely revoke the official provider session.
 
-Two hourly reservations are not atomic. One confirmed hour is partial; ambiguous outcomes require review. Availability, account eligibility and provider limits remain controlled by the official service. Thirty simultaneous accounts is a test target, not a production capacity guarantee. The host must be measured before broad rollout.
+Each schedule authorizes exactly one hour and records at most one submission attempt. Adjacent hours require separate schedules; they may use different courts. Ambiguous outcomes require review. Availability, account eligibility and provider limits remain controlled by the official service. Thirty simultaneous accounts is a test target, not a production capacity guarantee. The host must be measured before broad rollout.
