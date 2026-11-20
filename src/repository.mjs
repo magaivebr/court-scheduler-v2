@@ -111,7 +111,8 @@ export class Repository {
     return this.getConnection(userId);
   }
   createJob(userId, plan, mode) {
-    const selection = JSON.stringify({ date: plan.date, start: plan.start, courts: plan.courts, allowSwitch: plan.allowSwitch, authorization: false });
+    if(plan.durationHours!==1)throw new HttpError(400,'Each new schedule must book exactly one hour.');
+    const selection = JSON.stringify({ date: plan.date, start: plan.start, durationHours: 1, courts: plan.courts, authorization: false });
     return this.transaction(() => {
       const existing = this.db.prepare('SELECT id,selection_json,mode FROM jobs WHERE user_id=? AND idempotency_key=?').get(userId, plan.idempotencyKey);
       if (existing) {
@@ -130,7 +131,7 @@ export class Repository {
     if (!row) return null;
     const attempts = this.db.prepare('SELECT id,hour,court,status,evidence,message,created_at AS createdAt,finished_at AS finishedAt FROM attempts WHERE user_id=? AND job_id=? ORDER BY hour').all(row.user_id,row.id);
     const events = this.db.prepare('SELECT at,message FROM events WHERE user_id=? AND job_id=? ORDER BY id DESC LIMIT 100').all(row.user_id,row.id).reverse();
-    return { id:row.id,userId:row.user_id,...safeJSON(row.selection_json),mode:row.mode,status:row.status,releaseAt:row.release_at,runAt:row.run_at,checkedAt:row.checked_at,checkedAccount:row.checked_account,testSummary:row.test_summary,preparedAt:row.prepared_at,finishedAt:row.finished_at,error:row.error,createdAt:row.created_at,results:attempts,events };
+    return { id:row.id,userId:row.user_id,...safeJSON(row.selection_json),durationHours:safeJSON(row.selection_json).durationHours??2,mode:row.mode,status:row.status,releaseAt:row.release_at,runAt:row.run_at,checkedAt:row.checked_at,checkedAccount:row.checked_account,testSummary:row.test_summary,preparedAt:row.prepared_at,finishedAt:row.finished_at,error:row.error,createdAt:row.created_at,results:attempts,events };
   }
   getJob(userId,id) { return this.#job(this.db.prepare('SELECT * FROM jobs WHERE user_id=? AND id=?').get(userId,id)); }
   listJobs(userId) { return this.db.prepare('SELECT * FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 100').all(userId).map(row => this.#job(row)); }
@@ -151,6 +152,7 @@ export class Repository {
     return this.transaction(()=>{
       const job = this.getJob(userId,id), connection=this.getConnection(userId);
       if (!job) throw new HttpError(404,'Schedule not found.');
+      if(job.durationHours!==1)throw new HttpError(409,'This older plan covers two hours. Create separate one-hour schedules.');
       if(authorization!==true)throw new HttpError(400,'Confirm authorization for these exact sessions.');
       if (job.status==='armed') return job;
       if (job.status!=='draft' || job.results.length) throw new HttpError(409,'This plan cannot be scheduled.');
@@ -162,7 +164,7 @@ export class Repository {
       if (job.mode==='live' && Date.parse(job.releaseAt)<=now) throw new HttpError(409,'The release time has passed. Choose a future release.');
       for (const row of this.db.prepare("SELECT * FROM jobs WHERE user_id=? AND id<>? AND mode=? AND status IN ('armed','preparing','running','confirmed','partial','unknown','needs_review')").all(userId,id,job.mode)) {
         const other=safeJSON(row.selection_json);
-        if (other.date===job.date && job.start<other.start+2 && other.start<job.start+2) throw new HttpError(409,'An overlapping plan already exists for this account.');
+        if (other.date===job.date && job.start<other.start+(other.durationHours??2) && other.start<job.start+job.durationHours) throw new HttpError(409,'An overlapping plan already exists for this account.');
       }
       const runAt = new Date(job.mode==='rehearsal'?now+5000:Date.parse(job.releaseAt)).toISOString();
       const selection=safeJSON(this.db.prepare('SELECT selection_json FROM jobs WHERE user_id=? AND id=?').get(userId,id).selection_json);
@@ -209,18 +211,10 @@ export class Repository {
   beginAttempt(userId,jobId,{hour,court,leaseOwner}) {
     return this.transaction(()=>this.#beginAttempt(userId,jobId,{hour,court,leaseOwner}));
   }
-  beginPairAttempts(userId,jobId,{court,leaseOwner}) {
-    return this.transaction(()=>{
-      const job=this.getJob(userId,jobId);
-      if(!job)throw new HttpError(404,'Booking plan not found.');
-      // Either both local claims commit, or neither does. Official bookings remain separate.
-      return [0,1].map(index=>this.#beginAttempt(userId,jobId,{hour:job.start+index,court,leaseOwner}));
-    });
-  }
   #beginAttempt(userId,jobId,{hour,court,leaseOwner}) {
       this.assertLease('scheduler',leaseOwner);
       const job=this.getJob(userId,jobId), now=Date.now();
-      if(!job||job.status!=='running'||!job.authorization||![job.start,job.start+1].includes(hour)||!job.courts.includes(court))throw new HttpError(409,'This submission is outside the authorized plan.');
+      if(!job||job.status!=='running'||!job.authorization||job.durationHours!==1||hour!==job.start||!job.courts.includes(court))throw new HttpError(409,'This submission is outside the authorized plan.');
       if(!job.runAt||now<Date.parse(job.runAt)||now>Date.parse(job.runAt)+120000)throw new HttpError(409,'This submission is outside the execution window.');
       if(!this.db.prepare('SELECT user_id FROM account_locks WHERE user_id=? AND job_id=? AND owner=?').get(userId,jobId,leaseOwner))throw new HttpError(409,'This account is controlled by another worker.');
       if(this.db.prepare('SELECT id FROM attempts WHERE job_id=? AND hour=?').get(jobId,hour))throw new HttpError(409,'This hour already has a recorded submission attempt.');

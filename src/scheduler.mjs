@@ -12,7 +12,7 @@ const DEADLINE = 120000;
 export function outcomeStatus(results) {
   if(results.some(r=>r.status==='unknown'||r.status==='pending'))return 'unknown';
   const count=results.filter(r=>r.status==='confirmed').length;
-  return count===2?'confirmed':count===1?'partial':'failed';
+  return count===1&&results.length===1?'confirmed':'failed';
 }
 
 /** One host owns the scheduler lease. Account contexts never share login state.
@@ -57,12 +57,13 @@ export class CourtRunner {
     if(this.testing.size>=3)throw fail('Three account tests are already running. Try again shortly.',429);
     if(this.inflight.size)throw fail('Scheduled bookings are preparing or executing. Try the read-only test again after they finish.');
     if(!job||job.userId!==userId||job.mode!==this.config.mode)throw fail('Schedule not found.',404);
+    if(job.durationHours!==1)throw fail('Create a one-hour schedule. Older two-hour plans cannot run.');
     if(!['draft','failed','blocked'].includes(job.status)||job.results?.length)throw fail('Only an unsubmitted draft can be tested.');
     this.testing.add(userId);
     try {
       const connection=await this.connection(userId);
       let result;
-      if(this.config.mode==='rehearsal')result={accountLabel:connection.accountLabel,summary:'Rehearsal only: two simulated free sessions validated. No request was sent to KU Leuven.'};
+      if(this.config.mode==='rehearsal')result={accountLabel:connection.accountLabel,summary:'Rehearsal only: one simulated free session validated. No request was sent to KU Leuven.'};
       else result=await this.provider.test(job,connection,await this.repo.loadProviderSession(userId));
       await this.repo.updateJob(userId,job.id,{status:'draft',checkedAt:new Date(this.now()).toISOString(),checkedAccount:result.accountLabel,testSummary:result.summary,error:null});
       await this.repo.addEvent(userId,job.id,result.summary);
@@ -123,6 +124,7 @@ export class CourtRunner {
   async execute(record) {
     const {job,runAt}=record;const userId=job.userId;
     try {
+      if(job.durationHours!==1)throw fail('Create separate one-hour schedules for this older plan.');
       if(job.mode!==this.config.mode)throw fail('This schedule belongs to another execution mode.');
       if(this.config.mode==='live'&&!this.config.liveEnabled)throw fail('Live booking is disabled.');
       if(this.now()>runAt+MAX_LATENESS)throw fail('The release was missed. No booking was submitted.');
@@ -131,10 +133,10 @@ export class CourtRunner {
       const connection=await this.connection(userId,job.checkedAccount);
       if(this.config.mode==='live'&&(!connection.identity?.verified||connection.identity.kind!=='configured_dom_identity'))throw fail('Stable provider account identity has not been verified. Live execution is blocked.');
       await this.repo.updateJob(userId,job.id,{status:'preparing',preparationStartedAt:new Date(this.now()).toISOString(),error:null});
-      await this.repo.addEvent(userId,job.id,this.config.mode==='rehearsal'?'Preparing isolated rehearsal account.':'Preparing two isolated booking pages. No reservation is submitted before release.');
+      await this.repo.addEvent(userId,job.id,this.config.mode==='rehearsal'?'Preparing isolated rehearsal account.':'Preparing an isolated booking page. No reservation is submitted before release.');
       record.prepared=this.config.mode==='live'
         ?await this.provider.prepare(job,connection,await this.repo.loadProviderSession(userId))
-        :{available:[job.courts.slice(),job.courts.slice()],accountLabel:connection.accountLabel,closed:true};
+        :{available:[job.courts.slice()],accountLabel:connection.accountLabel,closed:true};
       await this.repo.updateJob(userId,job.id,{preparedAt:new Date(this.now()).toISOString()});
       const wall=this.now(),mono=performance.now();
       while(this.now()<runAt){
@@ -146,18 +148,12 @@ export class CourtRunner {
       if(this.now()>runAt+MAX_LATENESS)throw fail('Preparation missed the release window. No booking was submitted.');
       await this.repo.updateJob(userId,job.id,{status:'running'});
       await this.repo.addEvent(userId,job.id,this.config.mode==='rehearsal'?'Rehearsal started. These results are simulated.':'Release reached. Starting the authorized booking attempt.');
-      const paired=await this.runSameCourt(record);
-      if(!paired && job.allowSwitch) {
-        await this.repo.addEvent(userId,job.id,'No court passed both hour checks with both claims available. Trying each hour separately; a court change is allowed.');
-        await Promise.allSettled([this.runHour(record,0),this.runHour(record,1)]);
-      } else if(!paired) {
-        await this.repo.addEvent(userId,job.id,'No single permitted court passed both hour checks. Nothing was submitted.');
-      }
+      await this.runHour(record,0);
       const latest=await this.repo.getJob(userId,job.id);
       if(!latest||(!ACTIVE.has(latest.status)&&!(latest.results?.length)))return;
       const status=outcomeStatus(latest.results??[]);
       await this.repo.updateJob(userId,job.id,{status,finishedAt:new Date(this.now()).toISOString()});
-      await this.repo.addEvent(userId,job.id,status==='unknown'?'An outcome needs review. Check My bookings on the official site before trying again.':status==='partial'?'One hour was confirmed. It has been kept; no reservation was cancelled.':status==='confirmed'?(this.config.mode==='rehearsal'?'Rehearsal completed with two simulated confirmations.':'Both official page confirmations were observed. Verify the reservation details in My bookings.'):'No two-hour booking was confirmed.');
+      await this.repo.addEvent(userId,job.id,status==='unknown'?'An outcome needs review. Check My bookings on the official site before trying again.':status==='confirmed'?(this.config.mode==='rehearsal'?'Rehearsal completed with one simulated confirmation.':'The official page confirmed the hour. Verify the reservation details in My bookings.'):'No booking was confirmed for this hour.');
     } catch {
       const latest=await this.repo.getJob(userId,job.id);
       if(!latest)return;
@@ -197,22 +193,6 @@ export class CourtRunner {
       await this.submit(record,index,court,attempt);return;
     }
     await this.repo.addEvent(job.userId,job.id,`No eligible permitted court could be submitted for ${String(job.start+index).padStart(2,'0')}:00.`);
-  }
-  async runSameCourt(record) {
-    const {job}=record;
-    const candidates=job.courts.filter(c=>record.prepared.available.every(list=>list.includes(c)));
-    for(const court of candidates){
-      // Wait for both pages to finish before opening dialogs for the next candidate.
-      const readiness=await Promise.allSettled([this.ready(record,0,court),this.ready(record,1,court)]);
-      if(readiness.some(result=>result.status==='rejected'))continue;
-      let attempts;
-      try{attempts=await this.repo.beginPairAttempts(job.userId,job.id,{court,leaseOwner:this.owner});}
-      catch(error){if(error.code==='RESOURCE_BUSY')continue;throw error;}
-      // Once either hour might have been submitted, never retry it on another court.
-      await Promise.allSettled(attempts.map((attempt,index)=>this.submit(record,index,court,attempt)));
-      return true;
-    }
-    return false;
   }
   async stop() {
     this.stopping=true;this.running=false;clearInterval(this.timer);

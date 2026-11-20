@@ -113,10 +113,11 @@ export class BookingProvider {
     }
   }
   async prepare(job, connection, storageState) {
+    if(job.durationHours!==1)throw message('Each schedule must cover exactly one hour.');
     if (!storageState || connection?.status !== 'connected' || !connection.accountLabel) throw message('Connect your booking account before preparing a booking.');
     const context = await this.createContext(storageState);
     try {
-      const pages = await Promise.all([this.officialPage(context), this.officialPage(context)]);
+      const pages = await Promise.all([this.officialPage(context)]);
       const available = await Promise.all(pages.map(async (page, index) => {
         await this.assertAccount(page, connection.accountLabel,connection.identity);
         return page.evaluate(async ({ date, hour, courts }) => {
@@ -125,14 +126,13 @@ export class BookingProvider {
           return courts.filter(c => found.includes(c));
         }, { date: job.date, hour: job.start + index, courts: job.courts });
       }));
-      if (available.some(c => !c.length)) throw message('No permitted court is selectable for one of the requested hours.');
+      if (available.some(c => !c.length)) throw message('No permitted court is selectable for the requested hour.');
       return { context, pages, available, accountLabel: connection.accountLabel, identity:connection.identity, jobId: job.id, closed: false };
     } catch (error) { await context.close().catch(() => {}); throw error; }
   }
   async test(job, connection, storageState) {
     const prepared = await this.prepare(job, connection, storageState);
     try {
-      const common = job.courts.filter(c => prepared.available.every(list => list.includes(c)));
       const check = async (index, court) => {
         const page = prepared.pages[index];
           try {
@@ -147,24 +147,14 @@ export class BookingProvider {
             return true;
           } catch { await page.evaluate(() => CourtAdapter.closeModal()).catch(() => {}); return false; }
       };
-      const result = courts => ({accountLabel:connection.accountLabel,tested:courts.map((court,index)=>({hour:job.start+index,court})),summary:'Both hourly dialogs were checked without submitting a reservation.'});
-      for (const court of common) {
-        if (await check(0,court) && await check(1,court)) return result([court,court]);
+      for (const court of prepared.available[0]) {
+        if(await check(0,court))return {accountLabel:connection.accountLabel,tested:[{hour:job.start,court}],summary:'The hourly booking dialog was checked without submitting a reservation.'};
       }
-      if (!job.allowSwitch) throw message('No single permitted court passed both hourly checks.');
-      const tested = [];
-      for (let index = 0; index < 2; index++) {
-        let selected;
-        for (const court of prepared.available[index]) {
-          if (await check(index,court)) { selected=court; break; }
-        }
-        if (!selected) throw message('The read-only test could not validate a permitted free session. Check membership, date and account on the official site.');
-        tested.push(selected);
-      }
-      return result(tested);
+      throw message('The read-only test could not validate a permitted free session. Check membership, date and account on the official site.');
     } finally { await this.closePrepared(prepared); }
   }
   async readyCandidate(prepared, job, index, court) {
+    if(job.durationHours!==1||index!==0)throw message('This schedule authorizes only its selected hour.');
     const page = prepared.pages[index];
     await this.assertAccount(page, prepared.accountLabel,prepared.identity);
     await page.evaluate(async ({date,hour,court}) => {
@@ -174,6 +164,7 @@ export class BookingProvider {
     }, {date:job.date,hour:job.start+index,court});
   }
   async submit(prepared, job, index, court, beforeClick = async () => {}) {
+    if(job.durationHours!==1||index!==0)throw message('This schedule authorizes only its selected hour.');
     if (!this.config.liveEnabled || this.config.mode !== 'live') throw message('Live booking is disabled on this host.');
     if(!prepared.identity?.verified||prepared.identity.kind!=='configured_dom_identity')throw message('A stable provider account identity must be verified before live booking.');
     const page = prepared.pages[index];

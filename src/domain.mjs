@@ -7,19 +7,20 @@ export function releaseForDate(date) {
 }
 export function validatePlan(input, now = Date.now()) {
   if (!input || Array.isArray(input) || typeof input !== 'object') throw new HttpError(400, 'A booking plan is required.');
-  const allowed = new Set(['date', 'start', 'courts', 'allowSwitch', 'authorization', 'idempotencyKey']);
+  const allowed = new Set(['date', 'start', 'durationHours', 'courts', 'allowSwitch', 'authorization', 'idempotencyKey']);
   if (Object.keys(input).some(key => !allowed.has(key))) throw new HttpError(400, 'Unknown booking field.');
   let date;
   try { date = Temporal.PlainDate.from(input.date).toString(); } catch { throw new HttpError(400, 'Choose a valid playing date.'); }
   if (date !== input.date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'Choose a valid playing date.');
   const today = Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO(TIME_ZONE).toPlainDate();
   if (Temporal.PlainDate.compare(date, today) < 0 || Temporal.PlainDate.compare(date, today.add({ days: 31 })) > 0) throw new HttpError(400, 'Choose a date within the next 31 days.');
-  if (!Number.isInteger(input.start) || input.start < 0 || input.start > 22) throw new HttpError(400, 'Choose two consecutive hourly sessions.');
+  if (!Number.isInteger(input.start) || input.start < 0 || input.start > 23) throw new HttpError(400, 'Choose one hourly session.');
+  if (input.durationHours !== 1) throw new HttpError(400, 'Each schedule books one hour. Refresh the page and choose a session.');
   // Accept old clients' fields, but new plans always use the automatic court policy.
   if (input.courts !== undefined && (!Array.isArray(input.courts) || input.courts.length < 1 || input.courts.length > 3 || input.courts.some(c => ![1, 2, 3].includes(c)) || new Set(input.courts).size !== input.courts.length)) throw new HttpError(400, 'Invalid courts.');
   if ((input.allowSwitch !== undefined && typeof input.allowSwitch !== 'boolean') || typeof input.authorization !== 'boolean') throw new HttpError(400, 'Invalid booking authorization.');
   if (typeof input.idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(input.idempotencyKey)) throw new HttpError(400, 'A valid request identifier is required.');
-  return { date, start: input.start, courts: [1, 2, 3], allowSwitch: true, authorization: false, idempotencyKey: input.idempotencyKey, releaseAt: releaseForDate(date) };
+  return { date, start: input.start, durationHours: 1, courts: [1, 2, 3], authorization: false, idempotencyKey: input.idempotencyKey, releaseAt: releaseForDate(date) };
 }
 export function validateRegistration(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'Enter your account details.');
