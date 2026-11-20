@@ -178,14 +178,34 @@ async function stopJob(id,button){
 async function startRemote(){
   $('connect-provider').disabled=true;setError('account-error','');
   try{
-    const {id}=await request('/api/connection/start',{method:'POST',body:{},timeout:60000});state.remote=id;closeDialog('account-dialog');$('remote-image').hidden=true;$('remote-image').removeAttribute('src');$('remote-loading').hidden=false;$('remote-text').value='';setError('remote-error','');openDialog('remote-dialog');pollRemote();
+    const {id}=await request('/api/connection/start',{method:'POST',body:{},timeout:60000});state.remote=id;state.remoteAutoSave=true;closeDialog('account-dialog');$('remote-image').hidden=true;$('remote-image').removeAttribute('src');$('remote-loading').hidden=false;$('remote-text').value='';$('booking-password').value='';setError('remote-error','');setError('booking-login-error','');openDialog('remote-dialog');showBookingForm();
   }catch(error){setError('account-error',error);}finally{$('connect-provider').disabled=false;}
+}
+function showBookingForm(){
+  clearTimeout(state.remoteTimer);$('booking-password').type='password';$('booking-password-toggle').textContent='Show password';$('booking-login-form').hidden=false;$('official-login-view').hidden=true;$('remote-finish').hidden=true;$('remote-dialog').classList.add('simple-login');
+}
+function showOfficialLogin(){
+  $('booking-password').value='';$('booking-login-form').hidden=true;$('official-login-view').hidden=false;$('remote-finish').hidden=false;$('remote-dialog').classList.remove('simple-login');state.remoteAutoSave=true;pollRemote();
+}
+async function submitBookingLogin(event){
+  event.preventDefault();if(!state.remote)return;
+  const id=state.remote,body={email:$('booking-email').value.trim(),password:$('booking-password').value};
+  $('booking-password').value='';$('booking-connect').disabled=true;$('booking-connect').textContent='Connecting…';$('official-login-button').disabled=true;setError('booking-login-error','');
+  try{
+    const result=await request(`/api/connection/${encodeURIComponent(id)}/credentials`,{method:'POST',body,timeout:90000});
+    if(state.remote!==id)return;
+    if(result.status==='connected'){await closeRemote(false);await refreshMe();toast('Booking account connected. You are ready to check your sessions.');}
+    else if(result.status==='attention_required'){showOfficialLogin();setError('remote-error',result.message);}
+    else setError('booking-login-error',result.message||'Sign-in was not completed. Please try again.');
+  }catch(error){if(state.remote===id)setError('booking-login-error',error);}
+  finally{body.password='';$('booking-connect').disabled=false;$('booking-connect').textContent='Connect account';$('official-login-button').disabled=false;}
 }
 async function pollRemote(){
   clearTimeout(state.remoteTimer);const id=state.remote;if(!id||!$('remote-dialog').open)return;
   try{
     const frame=await request(`/api/connection/${encodeURIComponent(id)}/frame`);
     if(state.remote!==id)return;
+    if(frame.authenticated&&state.remoteAutoSave){state.remoteAutoSave=false;await finishRemote();return;}
     $('remote-url').textContent=frame.url||'Official booking website';
     state.remoteWidth=frame.width||1280;state.remoteHeight=frame.height||900;
     if(typeof frame.image==='string'&&/^data:image\/(jpeg|png);base64,/.test(frame.image)){$('remote-image').src=frame.image;$('remote-image').hidden=false;$('remote-loading').hidden=true;}
@@ -199,7 +219,7 @@ async function remoteInput(input){
   catch(error){setError('remote-error',error);}
 }
 async function closeRemote(cancel=true){
-  const id=state.remote;state.remote=null;clearTimeout(state.remoteTimer);$('remote-text').value='';$('remote-image').removeAttribute('src');$('remote-image').hidden=true;closeDialog('remote-dialog');
+  const id=state.remote;state.remote=null;clearTimeout(state.remoteTimer);$('remote-text').value='';$('booking-password').value='';$('remote-image').removeAttribute('src');$('remote-image').hidden=true;closeDialog('remote-dialog');
   if(cancel&&id)await request(`/api/connection/${encodeURIComponent(id)}`,{method:'DELETE'}).catch(()=>{});
 }
 async function finishRemote(){
@@ -258,6 +278,10 @@ $('jobs-list').addEventListener('click',event=>{
   if(button.dataset.action==='stop')stopJob(button.dataset.id,button);
 });
 $('connect-provider').addEventListener('click',startRemote);$('remote-close').addEventListener('click',()=>closeRemote());$('remote-finish').addEventListener('click',finishRemote);
+$('booking-login-form').addEventListener('submit',submitBookingLogin);
+$('official-login-button').addEventListener('click',showOfficialLogin);
+$('booking-password-toggle').addEventListener('click',()=>{const field=$('booking-password');field.type=field.type==='password'?'text':'password';$('booking-password-toggle').textContent=field.type==='password'?'Show password':'Hide password';});
+$('back-to-booking-form').addEventListener('click',showBookingForm);
 $('remote-dialog').addEventListener('cancel',event=>{event.preventDefault();closeRemote();});
 $('remote-image').addEventListener('click',event=>{const rect=event.currentTarget.getBoundingClientRect();remoteInput({type:'click',x:Math.round((event.clientX-rect.left)*state.remoteWidth/rect.width),y:Math.round((event.clientY-rect.top)*state.remoteHeight/rect.height)});});
 $('remote-text-form').addEventListener('submit',event=>{event.preventDefault();const text=$('remote-text').value;$('remote-text').value='';if(text)remoteInput({type:'text',text});});
