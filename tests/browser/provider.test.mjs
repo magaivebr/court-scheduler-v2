@@ -61,6 +61,21 @@ test('browser fixture validates both hourly dialogs without final clicks, then e
   }finally{await p.closePrepared(prepared);await p.close();}
 });
 
+test('read-only browser checks prefer a valid matching pair, then split only as backup',async()=>{
+  for(const scenario of [
+    {courts:'(h===11?[1,2]:[2,3])',price:'window.fixturePrice',expected:[2,2]},
+    {courts:'[1,2,3]',price:"(h===12&&c===1?'€ 5.00':window.fixturePrice)",expected:[2,2]},
+    {courts:'(h===11?[1]:[3])',price:'window.fixturePrice',expected:[1,3]},
+  ]){
+    const p=new FixtureProvider();
+    p.fixture=FIXTURE.replace('for(const c of [1,2,3])',`for(const c of ${scenario.courts})`).replace("'+window.fixturePrice+'",`'+${scenario.price}+'`);
+    try{
+      const result=await p.test(job,await p.connection(),state);
+      assert.deepEqual(result.tested.map(r=>r.court),scenario.expected);assert.equal(p.clicks.length,0);
+    }finally{await p.close();}
+  }
+});
+
 test('browser fixture refuses changed account identity and nonzero prices before click',async()=>{
   const p=new FixtureProvider();let prepared;
   try{

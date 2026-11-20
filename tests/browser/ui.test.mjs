@@ -37,6 +37,9 @@ test('desktop and mobile: private account, test, explicit consent, durable sched
   try{
     await page.goto(origin);
     await page.locator('#service-notice.rehearsal').waitFor();
+    assert.equal(await page.locator('#allow-switch, [data-prefer], [data-court]').count(),0);
+    assert.equal(await page.locator('.court-row').count(),3);
+    assert.match(await page.locator('.schedule-section').innerText(),/Same court for both hours first/);
     await assertNoOverflow(page);
     await page.locator('#account-button').click();
     await page.locator('#register-tab').click();
@@ -52,6 +55,7 @@ test('desktop and mobile: private account, test, explicit consent, durable sched
     await page.waitForFunction(()=>document.querySelector('#connection-card').textContent.includes('Rehearsal account connected'));
     await page.locator('[data-close="account-dialog"]').last().click();
     await page.locator('#review-button').click();
+    assert.match(await page.locator('#review-summary').innerText(),/Different courts only as a backup/);
     assert.equal(await page.locator('#arm-button').isDisabled(),true);
     assert.equal(await page.locator('#authorization').isDisabled(),true);
     await page.locator('#test-button').click();
