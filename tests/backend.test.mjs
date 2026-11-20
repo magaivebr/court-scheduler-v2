@@ -19,7 +19,7 @@ function fixture(overrides={}) {
   return {dir,config,repository,close(){repository.close();rmSync(dir,{recursive:true,force:true});}};
 }
 const dateAfter=(days=2)=>Temporal.Now.zonedDateTimeISO('Europe/Brussels').toPlainDate().add({days}).toString();
-const plan=(overrides={})=>validatePlan({date:dateAfter(),start:11,courts:[1,2,3],allowSwitch:true,authorization:false,idempotencyKey:randomUUID(),...overrides});
+const plan=(overrides={})=>validatePlan({date:dateAfter(),start:11,durationHours:1,courts:[1,2,3],allowSwitch:true,authorization:false,idempotencyKey:randomUUID(),...overrides});
 function addUser(repo,index=0){return repo.register({name:`Person ${index}`,username:`person${index}`,passwordHash:'test-only',invite:repo.createInvite()});}
 function testedJob(repo,user,config,overrides={}){
   repo.saveConnection(user.id,{status:'simulated',accountLabel:`Rehearsal ${user.id}`,identity:{kind:'rehearsal',verified:false}});
@@ -35,29 +35,40 @@ test('Brussels release follows calendar days across both DST transitions',()=>{
   assert.throws(()=>validatePlan({...plan(),userId:'somebody-else'}),/Unknown/);
 });
 
-test('new plans always consider all courts and permit a change as backup',()=>{
+test('new plans authorize exactly one hour and consider all courts',()=>{
   for(const fields of [{courts:undefined,allowSwitch:undefined},{courts:[3],allowSwitch:false}]){
-    const value=plan(fields);assert.deepEqual(value.courts,[1,2,3]);assert.equal(value.allowSwitch,true);
+    const value=plan(fields);assert.deepEqual(value.courts,[1,2,3]);assert.equal(value.durationHours,1);
     assert.equal(value.authorization,false);
   }
 });
 
-test('pair claims roll back both hours and events if the second hour is busy',()=>{
+test('adjacent one-hour schedules are allowed, duplicates and extra-hour grants are rejected',()=>{
   const f=fixture();try{
-    const a=addUser(f.repository,1),b=addUser(f.repository,2),ja=testedJob(f.repository,a,f.config),jb=testedJob(f.repository,b,f.config);
-    f.repository.acquireLease('scheduler','pair-worker',30000);
-    for(const [user,job] of [[a,ja],[b,jb]]){
-      f.repository.armJob(user.id,job.id,{authorization:true});
-      f.repository.updateJob(user.id,job.id,{status:'running',runAt:new Date(Date.now()-100).toISOString()});
-      f.repository.claimJob(user.id,job.id,'pair-worker');
-    }
-    f.repository.beginAttempt(a.id,ja.id,{hour:12,court:1,leaseOwner:'pair-worker'});
-    const events=f.repository.getJob(b.id,jb.id).events.length;
-    assert.throws(()=>f.repository.beginPairAttempts(b.id,jb.id,{court:1,leaseOwner:'pair-worker'}),error=>error.code==='RESOURCE_BUSY');
-    const rolledBack=f.repository.getJob(b.id,jb.id);
-    assert.equal(rolledBack.results.length,0);assert.equal(rolledBack.events.length,events);
-    const pair=f.repository.beginPairAttempts(b.id,jb.id,{court:2,leaseOwner:'pair-worker'});
-    assert.deepEqual(pair.map(a=>[a.hour,a.court]),[[11,2],[12,2]]);
+    const u=addUser(f.repository),first=testedJob(f.repository,u,f.config);
+    f.repository.armJob(u.id,first.id,{authorization:true});
+    const next=testedJob(f.repository,u,f.config,{start:12});
+    assert.equal(f.repository.armJob(u.id,next.id,{authorization:true}).status,'armed');
+    const duplicate=testedJob(f.repository,u,f.config,{start:11});
+    assert.throws(()=>f.repository.armJob(u.id,duplicate.id,{authorization:true}),/overlapping/);
+    f.repository.acquireLease('scheduler','one-hour-worker',30000);
+    f.repository.updateJob(u.id,first.id,{status:'running',runAt:new Date(Date.now()-100).toISOString()});
+    f.repository.claimJob(u.id,first.id,'one-hour-worker');
+    assert.throws(()=>f.repository.beginAttempt(u.id,first.id,{hour:12,court:1,leaseOwner:'one-hour-worker'}),/outside the authorized plan/);
+    assert.equal(f.repository.getJob(u.id,first.id).results.length,0);
+    assert.equal(f.repository.beginAttempt(u.id,first.id,{hour:11,court:1,leaseOwner:'one-hour-worker'}).hour,11);
+  }finally{f.close();}
+});
+
+test('old two-hour records retain their duration and cannot be armed as one-hour plans',()=>{
+  const f=fixture();try{
+    const u=addUser(f.repository),j=testedJob(f.repository,u,f.config);
+    const legacy={date:j.date,start:j.start,courts:j.courts,allowSwitch:true,authorization:false};
+    f.repository.db.prepare('UPDATE jobs SET selection_json=? WHERE id=?').run(JSON.stringify(legacy),j.id);
+    assert.equal(f.repository.getJob(u.id,j.id).durationHours,2);
+    assert.throws(()=>f.repository.armJob(u.id,j.id,{authorization:true}),/older plan covers two hours/);
+    assert.throws(()=>plan({durationHours:2}),/one hour/);
+    assert.throws(()=>plan({durationHours:undefined}),/Refresh the page/);
+    assert.throws(()=>f.repository.createJob(u.id,{...plan(),durationHours:2},f.config.mode),/exactly one hour/);
   }finally{f.close();}
 });
 
@@ -192,7 +203,7 @@ test('HTTP authentication, one-use invites, CSRF and tenant ownership',async()=>
     assert.equal((await request('/api/rehearsal/connect',{method:'POST',cookie:a.cookie,csrf:'wrong',data:{}})).status,403);
     const authA={cookie:a.cookie,csrf:a.body.csrf},authB={cookie:b.cookie,csrf:b.body.csrf};
     assert.equal((await request('/api/rehearsal/connect',{method:'POST',...authA,data:{}})).status,200);
-    const payload={date:dateAfter(),start:11,courts:[1,2,3],allowSwitch:true,authorization:false,idempotencyKey:randomUUID()};
+    const payload={date:dateAfter(),start:11,durationHours:1,courts:[1,2,3],allowSwitch:true,authorization:false,idempotencyKey:randomUUID()};
     const created=await request('/api/jobs',{method:'POST',...authA,data:payload});assert.equal(created.status,201);assert.equal(created.body.job.authorization,false);
     assert.equal((await request('/api/jobs',{...authB})).body.jobs.length,0);
     for(const action of ['test','arm','stop'])assert.equal((await request(`/api/jobs/${created.body.job.id}/${action}`,{method:'POST',...authB,data:{authorization:true}})).status,404);

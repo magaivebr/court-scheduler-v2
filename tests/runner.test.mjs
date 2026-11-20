@@ -13,7 +13,7 @@ function account(repo,index,mode='rehearsal') {
   return user;
 }
 function plan(repo,user,index=0,mode='rehearsal') {
-  return repo.createJob(user.id,{date:`2027-01-${String(index+1).padStart(2,'0')}`,start:11,courts:[1,2,3],allowSwitch:true,authorization:false,idempotencyKey:randomUUID(),releaseAt:new Date(Date.now()+86400000).toISOString()},mode);
+  return repo.createJob(user.id,{date:`2027-01-${String(index+1).padStart(2,'0')}`,start:11,durationHours:1,courts:[1,2,3],allowSwitch:true,authorization:false,idempotencyKey:randomUUID(),releaseAt:new Date(Date.now()+86400000).toISOString()},mode);
 }
 const quietProvider=()=>({closePrepared:async()=>{},close:async()=>{}});
 async function settle(runner,repo,jobs) {
@@ -34,7 +34,7 @@ test('30 isolated accounts complete server-side rehearsals with tenant-scoped re
     await runner.start();await settle(runner,repo,jobs);
     for(const job of jobs){
       const result=repo.getJob(job.userId,job.id);
-      assert.equal(result.status,'confirmed');assert.equal(result.results.length,2);
+      assert.equal(result.status,'confirmed');assert.equal(result.results.length,1);
       assert.ok(result.results.every(a=>a.evidence==='rehearsal_only'));
       assert.equal(repo.listJobs(job.userId).length,1);
       const foreign=jobs.find(j=>j.userId!==job.userId);
@@ -57,10 +57,8 @@ test('shared court claims prevent four users from all confirming the same three 
 });
 
 for(const scenario of [
-  {name:'matching court takes priority over the first available court',available:[[1,2],[2,3]],expected:[2,2]},
-  {name:'another matching court is tried when the first pair fails validation',available:[[1,2,3],[1,2,3]],invalid:(i,c)=>i===1&&c===1,expected:[2,2]},
-  {name:'different courts are used automatically when no matching court exists',available:[[1],[3]],expected:[1,3]},
-  {name:'different courts remain a backup when all common pairs fail validation',available:[[1,2],[1,2]],invalid:(i,c)=>i===0?c===2:c===1,expected:[1,2]},
+  {name:'one schedule submits only its selected hour',available:[[2,3]],expected:[2]},
+  {name:'another court is tried for the same hour when the first is unavailable',available:[[2,3]],invalid:(_i,c)=>c===2,expected:[3]},
 ])test(scenario.name,async()=>{
   const c=config('live'),repo=new Repository(c),submissions=[];
   const provider={...quietProvider(),test:async(j,connection)=>({accountLabel:connection.accountLabel,summary:'Fixture check.'}),prepare:async()=>({available:scenario.available}),readyCandidate:async(_p,_j,i,court)=>{if(scenario.invalid?.(i,court))throw Error('Unavailable fixture court');},submit:async(_p,_j,i,court,beforeClick)=>{await beforeClick();submissions.push([i,court]);return {status:'confirmed',evidence:'fixture'};}};
@@ -73,6 +71,31 @@ for(const scenario of [
   }finally{await runner.stop();repo.close();}
 });
 
+test('two adjacent schedules for one account each submit exactly their own hour',async()=>{
+  const c=config('live'),repo=new Repository(c),submitted=[];
+  const provider={...quietProvider(),test:async(j,connection)=>({accountLabel:connection.accountLabel,summary:'Fixture check.'}),prepare:async()=>({available:[[1]]}),readyCandidate:async()=>{},submit:async(_p,j,i,court,beforeClick)=>{await beforeClick();submitted.push({hour:j.start+i,court});return {status:'confirmed',evidence:'fixture'};}};
+  const runner=new CourtRunner({repository:repo,config:c,provider});
+  try{
+    const u=account(repo,1,'live'),first=plan(repo,u,0,'live');
+    const second=repo.createJob(u.id,{...first,start:12,idempotencyKey:randomUUID()},'live');
+    for(const job of [first,second]){await runner.testJob(u.id,job);repo.armJob(u.id,job.id,{authorization:true});repo.updateJob(u.id,job.id,{runAt:new Date(Date.now()-10).toISOString()});}
+    await runner.start();await settle(runner,repo,[first,second]);
+    assert.deepEqual(submitted.map(r=>r.hour).sort(),[11,12]);
+    for(const job of [first,second]){const result=repo.getJob(u.id,job.id);assert.equal(result.status,'confirmed');assert.equal(result.results.length,1);assert.equal(result.results[0].hour,job.start);}
+  }finally{await runner.stop();repo.close();}
+});
+
+test('a previously armed two-hour plan is blocked without any submission',async()=>{
+  const c=config(),repo=new Repository(c),runner=new CourtRunner({repository:repo,config:c,provider:quietProvider()});
+  try{
+    const u=account(repo,1),j=plan(repo,u);await runner.testJob(u.id,j);repo.armJob(u.id,j.id,{authorization:true});
+    repo.db.prepare('UPDATE jobs SET selection_json=? WHERE id=?').run(JSON.stringify({date:j.date,start:j.start,courts:j.courts,allowSwitch:true,authorization:true}),j.id);
+    repo.updateJob(u.id,j.id,{runAt:new Date(Date.now()-10).toISOString()});
+    await runner.start();await settle(runner,repo,[j]);
+    const result=repo.getJob(u.id,j.id);assert.equal(result.status,'blocked');assert.equal(result.durationHours,2);assert.equal(result.results.length,0);
+  }finally{await runner.stop();repo.close();}
+});
+
 test('ambiguous provider outcomes keep durable unknown attempts and never auto-repeat',async()=>{
   const c=config('live'),repo=new Repository(c);let submissions=0;
   const provider={...quietProvider(),test:async(j,connection)=>({accountLabel:connection.accountLabel,summary:'Fixture read-only check.'}),prepare:async()=>({available:[[1,2,3],[1,2,3]]}),readyCandidate:async()=>{},submit:async(_p,_j,_i,_c,beforeClick)=>{await beforeClick();submissions++;throw Error('Synthetic network failure after click');}};
@@ -80,8 +103,8 @@ test('ambiguous provider outcomes keep durable unknown attempts and never auto-r
   try{
     const u=account(repo,1,'live'),j=plan(repo,u,0,'live');await runner.testJob(u.id,j);repo.armJob(u.id,j.id,{authorization:true});repo.updateJob(u.id,j.id,{runAt:new Date(Date.now()-10).toISOString()});
     await runner.start();await settle(runner,repo,[j]);
-    assert.equal(submissions,2);const result=repo.getJob(u.id,j.id);assert.equal(result.status,'unknown');assert.ok(result.results.every(a=>a.status==='unknown'));
-    for(let n=0;n<3;n++)await runner.tick();assert.equal(submissions,2);
+    assert.equal(submissions,1);const result=repo.getJob(u.id,j.id);assert.equal(result.status,'unknown');assert.ok(result.results.every(a=>a.status==='unknown'));
+    for(let n=0;n<3;n++)await runner.tick();assert.equal(submissions,1);
     assert.throws(()=>repo.armJob(u.id,j.id,{authorization:true}));
   }finally{await runner.stop();repo.close();}
 });
@@ -180,8 +203,10 @@ test('remote login expires and cannot be fetched after its deadline',async()=>{
   const f=remoteFixture();try{const s=await f.manager.start('account-a');f.advance();await assert.rejects(f.manager.frame('account-a',s.id),e=>e.status===410);}finally{await f.manager.close();}
 });
 
-test('unknown is distinct from partial and complete outcomes',()=>{
-  assert.equal(outcomeStatus([{status:'confirmed'},{status:'unknown'}]),'unknown');
-  assert.equal(outcomeStatus([{status:'confirmed'},{status:'rejected'}]),'partial');
-  assert.equal(outcomeStatus([{status:'confirmed'},{status:'confirmed'}]),'confirmed');
+test('one confirmed hour completes a schedule; uncertainty is never called success',()=>{
+  assert.equal(outcomeStatus([{status:'unknown'}]),'unknown');
+  assert.equal(outcomeStatus([{status:'pending'}]),'unknown');
+  assert.equal(outcomeStatus([{status:'confirmed'}]),'confirmed');
+  assert.equal(outcomeStatus([{status:'rejected'}]),'failed');
+  assert.equal(outcomeStatus([]),'failed');
 });
