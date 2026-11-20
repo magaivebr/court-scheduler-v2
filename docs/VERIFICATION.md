@@ -6,9 +6,9 @@ Checked on 20 November 2026 in the Windows development workspace using Node.js 2
 
 | Command | Observed result |
 | --- | --- |
-| `npm test` | **21 passed, 0 failed, 0 skipped** |
+| `npm test` | **27 passed, 0 failed, 0 skipped** |
 | `npm run check` | **25 JavaScript files passed syntax checking** |
-| Browser tests | **12 passed across the provider, login and UI suites**; changed login/UI suites rerun after final functional edits |
+| Browser tests | **13 passed across the provider, login and UI suites** |
 | `node --test tests/browser/provider.test.mjs` after enabling Chromium sandbox | **4 passed, 0 failed**, using installed Edge with approved external-process execution on Windows |
 
 The unit and integration suite uses generated users, local SQLite databases, synthetic provider behavior and mocked remote-browser operations. It does not log into KU Leuven or submit real reservations.
@@ -50,6 +50,14 @@ No real booking, cancellation or authenticated production login was performed fo
 Browser layout emulation, when performed, is not a substitute for testing on physical mobile devices. A GitHub Pages deployment only publishes the public interface; it does not provision or validate the private booking server.
 
 ## Release state
+
+### Automatic court selection
+
+New plans consider all three courts automatically. Both read-only tests and execution try a valid same-court pair first; only when no pair passes the checks and local claim allocation do they fall back to selecting each hour separately. The interface no longer offers court rankings, exclusions or a switching checkbox. Previously stored plans retain their original authorization scope.
+
+Both local submission claims are acquired in one database transaction, so a conflict on the second hour rolls back the first claim and its event. This permits trying another matching court before the split-court fallback. Both readiness checks finish before another candidate is opened. The official reservations themselves are still two separate operations; partial or uncertain results are not automatically retried on other courts.
+
+Regression checks cover normalization, atomic rollback, same-court priority, alternate matching courts, split-court fallback, competing accounts, uncertain results and removal of preference controls. All 27 unit/integration tests and 13 browser tests passed using synthetic data. No real reservation was submitted; automatic live booking remains disabled on the personal host.
 
 ### Simplified booking sign-in
 
