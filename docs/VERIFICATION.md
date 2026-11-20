@@ -51,6 +51,10 @@ Browser layout emulation, when performed, is not a substitute for testing on phy
 
 ## Release state
 
+### Windows personal host check — 20 November 2026
+
+The personal Windows host passed all 20 unit/integration checks, all 7 browser checks and syntax validation of 23 JavaScript files. Its limited per-user startup task was registered and observed running. The actual task opened a sandboxed Edge browser and verified two isolated contexts using entirely synthetic intercepted pages. A graceful stop/start was observed in the host log and followed by a healthy local `/healthz` response with the scheduler running in rehearsal. This verifies the current logged-in session; an actual reboot has not been tested. Tailscale's public Funnel activation and public HTTPS end-to-end checks were still pending when this record was written. See [personal server operation](PERSONAL-SERVER.md).
+
 The default configuration remains **rehearsal**, with live booking disabled. Production requires HTTPS configuration and a private encryption key. Live arming additionally checks explicit activation, an owned connected account, a configured stable identity, a successful recent test and the user's final authorization for the exact sessions.
 
 These controls reduce accidental or duplicate submissions; they do not guarantee court availability, exact-time execution, provider uptime or zero-cost hosting reliability. Keep the service in rehearsal until the live integration and chosen host have been validated.
