@@ -12,7 +12,7 @@ const timeLabel = value => {
   const d = new Date(value);
   return Number.isFinite(d.valueOf()) ? new Intl.DateTimeFormat('en-GB',{timeZone:ZONE,day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(d) : 'Not available';
 };
-const state = {config:null,backendUrl:'',user:null,csrf:null,connection:{status:'disconnected'},jobs:[],date:shiftDay(localDay(),2),start:11,courts:[1,2,3],allowSwitch:true,view:'facilities',register:false,pendingPlan:null,bookingBusy:false,remote:null,remoteTimer:null,remoteWidth:1280,remoteHeight:900,toastTimer:null};
+const state = {config:null,backendUrl:'',user:null,csrf:null,connection:{status:'disconnected'},jobs:[],date:shiftDay(localDay(),2),start:11,view:'facilities',register:false,pendingPlan:null,bookingBusy:false,remote:null,remoteTimer:null,remoteWidth:1280,remoteHeight:900,toastTimer:null};
 const connected = () => ['connected','simulated','ready'].includes(state.connection?.status);
 const rehearsal = () => state.config?.mode === 'rehearsal';
 const liveReady = () => rehearsal() || state.config?.liveEnabled === true;
@@ -58,9 +58,9 @@ function renderNotice(){
   } else if(!state.config.liveEnabled){
     notice.innerHTML='<strong>Booking service setup in progress.</strong><p>Account connection and read-only checks may be available. Automatic booking remains disabled until the live integration is verified.</p>';
   } else if(state.user && connected()){
-    notice.classList.add('connected');notice.innerHTML='<strong>Your booking account is connected.</strong><p>Choose your sessions and select Schedule booking. Once accepted by the server, your device can be closed.</p>';
+    notice.classList.add('connected');notice.innerHTML='<strong>Your booking account is connected.</strong><p>Choose your session and select Schedule booking. Once accepted by the server, your device can be closed.</p>';
   } else {
-    notice.innerHTML='<strong>Plan here. Let the server handle booking time.</strong><p>Connect your private account, choose two sessions and confirm a schedule. Nothing needs to be installed.</p>';
+    notice.innerHTML='<strong>Plan here. Let the server handle booking time.</strong><p>Connect your private account, choose a session and confirm a schedule. Nothing needs to be installed.</p>';
   }
 }
 function renderSelection(){
@@ -69,8 +69,8 @@ function renderSelection(){
   if(!days.includes(state.date))days[6]=state.date;
   $('date-strip').innerHTML=days.map(date=>`<button type="button" class="day-tab${date===state.date?' active':''}" role="tab" aria-selected="${date===state.date}" data-date="${date}">${escapeHTML(dateLabel(date,{weekday:'short',day:'2-digit',month:'2-digit'}))}</button>`).join('');
   $('time-slots').innerHTML=Array.from({length:14},(_,i)=>i+8).map(h=>`<button type="button" class="slot${h===state.start?' active':''}" aria-pressed="${h===state.start}" data-hour="${h}"><strong>${hour(h)}</strong><span>60 minutes</span></button>`).join('');
-  $('selected-period').textContent=`${dateLabel(state.date,{weekday:'short',day:'numeric',month:'short'})} · ${hour(state.start)}–${hour(state.start+2)}`;
-  $('booking-hours').textContent=`${hour(state.start)}–${hour(state.start+1)} and ${hour(state.start+1)}–${hour(state.start+2)}`;
+  $('selected-period').textContent=`${dateLabel(state.date,{weekday:'short',day:'numeric',month:'short'})} · ${hour(state.start)}–${hour(state.start+1)}`;
+  $('booking-hours').textContent=`${hour(state.start)}–${hour(state.start+1)}`;
   if(!state.bookingBusy){setError('booking-error','');$('booking-progress').textContent='';}
   updateBookingButton();
   $('release-line').textContent=`Booking opens ${dateLabel(shiftDay(state.date,-1),{weekday:'long',day:'numeric',month:'long'})} at 09:00 Brussels time.`;
@@ -89,15 +89,15 @@ function renderAccount(){
   $('disconnect-provider').hidden=!connected();
   renderNotice();updateBookingButton();
 }
-const statusLabels={draft:'Draft',tested:'Test passed',checked:'Test passed',armed:'Scheduled',scheduled:'Scheduled',preparing:'Preparing',running:'Booking in progress',confirmed:'Both hours booked',partial:'Partially booked',failed:'Unsuccessful',rejected:'Rejected',cancelled:'Stopped',stopped:'Stopped',unknown:'Needs review',needs_attention:'Needs review',needs_login:'Reconnect required',blocked:'Blocked',testing:'Testing'};
+const statusLabels={draft:'Draft',tested:'Test passed',checked:'Test passed',armed:'Scheduled',scheduled:'Scheduled',preparing:'Preparing',running:'Booking in progress',confirmed:'Booked',partial:'Partially booked',failed:'Unsuccessful',rejected:'Rejected',cancelled:'Stopped',stopped:'Stopped',unknown:'Needs review',needs_attention:'Needs review',needs_login:'Reconnect required',blocked:'Blocked',testing:'Testing'};
 function renderJobs(){
   if(!state.user){$('jobs-list').innerHTML='<div class="empty-state"><h2>Your schedules, on every device</h2><p>Connect to the private booking service to save and manage your schedules. Account details are not collected on the public page.</p><button class="primary-button" data-action="connect" type="button">Connect account</button></div>';return;}
-  if(!state.jobs.length){$('jobs-list').innerHTML='<div class="empty-state"><h2>No schedules yet</h2><p>Choose your playing date and two consecutive hours. Court selection and booking checks are automatic.</p><button class="primary-button" data-action="new" type="button">Choose sessions</button></div>';return;}
+  if(!state.jobs.length){$('jobs-list').innerHTML='<div class="empty-state"><h2>No schedules yet</h2><p>Choose your playing date and one hour. Court selection and booking checks are automatic.</p><button class="primary-button" data-action="new" type="button">Choose a session</button></div>';return;}
   $('jobs-list').innerHTML=[...state.jobs].sort((a,b)=>String(b.createdAt||b.id).localeCompare(String(a.createdAt||a.id))).map(job=>{
     const statuses=Array.isArray(job.results)?job.results:[];
     const stop=['draft','tested','checked','armed','scheduled','preparing'].includes(job.status);
     const choose=['draft','tested','checked'].includes(job.status);
-    return `<article class="job-card" data-job="${escapeHTML(job.id)}"><div class="job-top"><h2>${escapeHTML(dateLabel(job.date))} · ${hour(job.start)}–${hour(job.start+2)}</h2><span class="job-badge ${escapeHTML(job.status)}">${escapeHTML(statusLabels[job.status]||job.status)}</span></div><div class="job-meta">Courts: ${escapeHTML((job.courts||[]).map(c=>`Court ${c}`).join(', '))}<br>${job.allowSwitch?'Same court first · Different courts as a backup':'Same court required by this previously saved plan'}<br>Booking release: ${escapeHTML(timeLabel(job.releaseAt))} · Brussels</div><div class="job-sessions">${[0,1].map(i=>{const result=statuses.find(r=>r.hour===job.start+i)||statuses[i];return `<div class="job-session"><strong>${hour(job.start+i)}–${hour(job.start+i+1)}</strong><span>${result?`${result.court?`Court ${escapeHTML(result.court)} · `:''}${escapeHTML(result.status==='confirmed'?'Confirmed':result.status||'Awaiting result')}`:'No confirmed reservation'}</span></div>`;}).join('')}</div>${job.mode==='rehearsal'?'<p class="mode-note">Rehearsal result only. No real court reservation.</p>':''}${job.status==='unknown'?'<p class="job-meta">The outcome is uncertain. Check My bookings on the official site before making another attempt.</p>':''}<div class="job-actions">${choose?`<button class="primary-button" data-action="choose" data-id="${escapeHTML(job.id)}" type="button">Choose these sessions</button>`:''}${stop?`<button class="secondary-button" data-action="stop" data-id="${escapeHTML(job.id)}" type="button">Stop schedule</button>`:''}<a class="text-button" href="https://usc.kuleuven.cloud/bookings/rent?tags=132" target="_blank" rel="noopener noreferrer">Open official booking site</a></div>${job.events?.length?`<details class="job-events"><summary>Activity · ${job.events.length} events</summary><ol>${job.events.map(e=>`<li><time>${escapeHTML(timeLabel(e.at))}</time>${escapeHTML(e.message)}</li>`).join('')}</ol></details>`:''}</article>`;
+    return `<article class="job-card" data-job="${escapeHTML(job.id)}"><div class="job-top"><h2>${escapeHTML(dateLabel(job.date))} · ${hour(job.start)}–${hour(job.start+(job.durationHours??2))}</h2><span class="job-badge ${escapeHTML(job.status)}">${escapeHTML(statusLabels[job.status]||job.status)}</span></div><div class="job-meta">Courts: ${escapeHTML((job.courts||[]).map(c=>`Court ${c}`).join(', '))}<br>${job.durationHours===1?'One hour · any available court':'Previously saved two-hour schedule'}<br>Booking release: ${escapeHTML(timeLabel(job.releaseAt))} · Brussels</div><div class="job-sessions">${Array.from({length:job.durationHours??2},(_,i)=>i).map(i=>{const result=statuses.find(r=>r.hour===job.start+i)||statuses[i];return `<div class="job-session"><strong>${hour(job.start+i)}–${hour(job.start+i+1)}</strong><span>${result?`${result.court?`Court ${escapeHTML(result.court)} · `:''}${escapeHTML(result.status==='confirmed'?'Confirmed':result.status||'Awaiting result')}`:'No confirmed reservation'}</span></div>`;}).join('')}</div>${job.mode==='rehearsal'?'<p class="mode-note">Rehearsal result only. No real court reservation.</p>':''}${job.status==='unknown'?'<p class="job-meta">The outcome is uncertain. Check My bookings on the official site before making another attempt.</p>':''}<div class="job-actions">${choose?`<button class="primary-button" data-action="choose" data-id="${escapeHTML(job.id)}" type="button">Choose this hour</button>`:''}${stop?`<button class="secondary-button" data-action="stop" data-id="${escapeHTML(job.id)}" type="button">Stop schedule</button>`:''}<a class="text-button" href="https://usc.kuleuven.cloud/bookings/rent?tags=132" target="_blank" rel="noopener noreferrer">Open official booking site</a></div>${job.events?.length?`<details class="job-events"><summary>Activity · ${job.events.length} events</summary><ol>${job.events.map(e=>`<li><time>${escapeHTML(timeLabel(e.at))}</time>${escapeHTML(e.message)}</li>`).join('')}</ol></details>`:''}</article>`;
   }).join('');
 }
 async function refreshMe(){
@@ -130,16 +130,16 @@ async function schedulePlan(){
   if(!state.pendingPlan||Object.keys(selection).some(k=>state.pendingPlan[k]!==selection[k]))state.pendingPlan={...selection,key:crypto.randomUUID()};
   const pending=state.pendingPlan;
   state.bookingBusy=true;setError('booking-error','');updateBookingButton();
-  $('booking-progress').textContent='Checking your two sessions…';
+  $('booking-progress').textContent='Checking your session…';
   let submitting=false;
   try{
     // Reuse the same request identifier after a lost response or retry.
-    let {job}=await request('/api/jobs',{method:'POST',body:{date:pending.date,start:pending.start,authorization:false,idempotencyKey:pending.key}});
+    let {job}=await request('/api/jobs',{method:'POST',body:{date:pending.date,start:pending.start,durationHours:1,authorization:false,idempotencyKey:pending.key}});
     if(!job.authorization){
       const checked=await request('/api/jobs/'+encodeURIComponent(job.id)+'/test',{method:'POST',body:{},timeout:90000});
       job=checked.job;
       if(!job.checkedAt)throw new Error('The booking checks did not pass. Nothing has been scheduled.');
-      $('booking-progress').textContent='Checks passed. Scheduling your sessions…';
+      $('booking-progress').textContent='Checks passed. Scheduling your session…';
       submitting=true;
       // The labelled scheduling click authorizes the exact selection frozen above.
       ({job}=await request('/api/jobs/'+encodeURIComponent(job.id)+'/arm',{method:'POST',body:{authorization:true}}));
@@ -223,7 +223,7 @@ $('date-strip').addEventListener('keydown',event=>{
 });
 $('playing-date').addEventListener('change',event=>{if(event.target.validity.valid&&event.target.value){state.date=event.target.value;renderSelection();}});
 $('time-slots').addEventListener('click',event=>{const b=event.target.closest('[data-hour]');if(b){state.start=Number(b.dataset.hour);renderSelection();}});
-$('reset-selection').addEventListener('click',()=>{state.date=shiftDay(localDay(),2);state.start=11;state.courts=[1,2,3];state.allowSwitch=true;renderSelection();});
+$('reset-selection').addEventListener('click',()=>{state.date=shiftDay(localDay(),2);state.start=11;renderSelection();});
 $('schedule-button').addEventListener('click',schedulePlan);
 document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>closeDialog(button.dataset.close)));
 $('signin-tab').addEventListener('click',()=>setAuthMode(false));$('register-tab').addEventListener('click',()=>setAuthMode(true));
