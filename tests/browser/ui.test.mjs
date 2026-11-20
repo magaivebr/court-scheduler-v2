@@ -109,6 +109,37 @@ test('GitHub Pages mode exposes no credential entry or runnable schedule',{timeo
   }finally{await context.close();}
 });
 
+test('simple booking login clears passwords, supports retry and connects without a save step',async()=>{
+  for(const width of [1440,390]){
+    const context=await browser.newContext({viewport:{width,height:844}}),page=await context.newPage();
+    let connected=false,calls=0;
+    try{
+      await page.route('**/api/**',async route=>{
+        const request=route.request(),url=new URL(request.url());
+        if(url.pathname==='/api/config')return route.fulfill({json:{mode:'live',liveEnabled:false}});
+        if(url.pathname==='/api/me')return route.fulfill({json:{user:{id:'fixture',name:'Simple Fixture'},csrf:'fixture-csrf',connection:{status:connected?'connected':'disconnected',accountLabel:connected?'Official Fixture':''},jobs:[]}});
+        if(url.pathname==='/api/connection/start')return route.fulfill({json:{id:'fixture-login'}});
+        if(url.pathname==='/api/connection/fixture-login/credentials'){
+          const data=request.postDataJSON();assert.equal(data.email,'fixture@example.invalid');assert.equal(request.headers()['x-csrf-token'],'fixture-csrf');
+          calls++;
+          if(calls===1)return route.fulfill({json:{status:'credentials_required',message:'Check your email and password.'}});
+          connected=true;return route.fulfill({json:{status:'connected',connection:{status:'connected'}}});
+        }
+        if(url.pathname==='/api/jobs')return route.fulfill({json:{jobs:[]}});
+        return route.fulfill({status:404,json:{error:'Not found'}});
+      });
+      await page.goto(origin);await page.locator('#account-name').filter({hasText:'Simple Fixture'}).waitFor();
+      await page.locator('#account-button').click();await page.locator('#connect-provider').click();
+      await page.locator('#booking-email').fill('fixture@example.invalid');await page.locator('#booking-password').fill('synthetic password');
+      await assertNoOverflow(page);await page.locator('#booking-connect').click();
+      await page.locator('#booking-login-error').filter({hasText:'Check your email'}).waitFor();assert.equal(await page.locator('#booking-password').inputValue(),'');
+      await page.locator('#booking-password').fill('synthetic retry');await page.locator('#booking-connect').click();
+      await page.waitForFunction(()=>!document.querySelector('#remote-dialog').open);
+      assert.equal(await page.locator('#booking-password').inputValue(),'');assert.equal(calls,2);assert.equal(connected,true);
+    }finally{await context.close();}
+  }
+});
+
 test('mobile remote login sends scaled inputs only to its own session and clears text',{timeout:20000},async()=>{
   const context=await browser.newContext({viewport:{width:390,height:844}});
   const page=await context.newPage();
@@ -131,6 +162,7 @@ test('mobile remote login sends scaled inputs only to its own session and clears
     await page.locator('#account-name').filter({hasText:'Remote Fixture'}).waitFor();
     await page.locator('#account-button').click();
     await page.locator('#connect-provider').click();
+    await page.locator('#official-login-button').click();
     await waitVisible(page,'#remote-image');
     await page.waitForFunction(()=>{const img=document.querySelector('#remote-image');return img.complete&&img.naturalWidth>0;});
     await page.locator('#remote-image').scrollIntoViewIfNeeded();
